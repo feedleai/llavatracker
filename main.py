@@ -178,7 +178,7 @@ def visualize_frame(
         f"Waiting for Face: {waiting_count}",
         f"Total Persons: {total_persons}",
         f"New This Frame: {new_persons_count}",
-        f"Appearance: Every 2 frames",
+        f"Appearance: Once only (immediate)",
         f"Press 'q' to quit"
     ]
     
@@ -345,9 +345,8 @@ def process_video(
     persons_with_face_features = set()  # track_ids that have had FACE features extracted
     face_extraction_delay = timedelta(seconds=2)  # 2-second delay for face only
     
-    # Track appearance extraction (every 2 frames, no delay)
-    last_appearance_extraction = {}  # track_id -> last_frame_id_extracted
-    appearance_extraction_interval = 2  # Extract every 2 frames
+    # Track appearance extraction (immediate, once only)
+    persons_with_appearance_features = set()  # track_ids that have had APPEARANCE features extracted
     
     # New: Track ID to Global ID mapping (this is the key change)
     track_to_global_mapping = {}  # track_id -> global_id
@@ -402,12 +401,11 @@ def process_video(
                         persons_with_face_features.add(person.track_id)
                         logger.info(f"Track ID {person.track_id} ready for face feature extraction")
                 
-                # Check if this person is ready for APPEARANCE extraction (every 2 frames, no delay)
-                last_extracted_frame = last_appearance_extraction.get(person.track_id, -1)
-                if frame_id - last_extracted_frame >= appearance_extraction_interval:
+                # Check if this person is ready for APPEARANCE extraction (immediate, once only)
+                if person.track_id not in persons_with_appearance_features:
                     persons_ready_for_appearance.append(person)
-                    last_appearance_extraction[person.track_id] = frame_id
-                    logger.debug(f"Track ID {person.track_id} ready for appearance extraction (frame {frame_id})")
+                    persons_with_appearance_features.add(person.track_id)
+                    logger.info(f"Track ID {person.track_id} ready for appearance extraction (immediate)")
             
             # Extract FACE features for persons ready (with 2-second delay, once only)
             for person in persons_ready_for_face_features:
@@ -480,9 +478,9 @@ def process_video(
                 except Exception as e:
                     logger.error(f"Face feature extraction failed for track {person.track_id}: {e}")
             
-            # Extract APPEARANCE features for all visible persons (every 2 frames, continuous)
+            # Extract APPEARANCE features for new persons only (immediate, once only)
             for person in persons_ready_for_appearance:
-                logger.debug(f"Extracting appearance features for track ID {person.track_id} (frame {frame_id})")
+                logger.info(f"Extracting appearance features for track ID {person.track_id} (once only)")
                 
                 try:
                     # Extract only appearance features
@@ -491,17 +489,16 @@ def process_video(
                     appearance_description = None
                     if updated_person and hasattr(updated_person, 'appearance') and updated_person.appearance:
                         appearance_description = updated_person.appearance
-                        logger.debug(f"Appearance description extracted for track {person.track_id}")
+                        logger.info(f"Appearance description extracted for track {person.track_id}")
                     
                     # Handle appearance for new or existing persons
                     if person.track_id in track_to_global_mapping:
-                        # Update existing person with latest appearance
+                        # Update existing person with appearance data
                         existing_global_id = track_to_global_mapping[person.track_id]
                         existing_profile = feature_db.get_profile(existing_global_id)
                         
                         if existing_profile and appearance_description is not None:
-                            logger.debug(f"Updating appearance for existing person {existing_global_id} (track {person.track_id})")
-                            # Replace latest appearance (this will add to the list, but database can handle latest logic)
+                            logger.info(f"Adding appearance to existing person {existing_global_id} (track {person.track_id})")
                             existing_profile.add_features(timestamp, None, appearance_description)
                             existing_profile.last_seen = timestamp
                             feature_db.update_profile(existing_profile)
@@ -699,7 +696,7 @@ def process_video(
                     del person_detection_times[track_id]
                     persons_with_face_features.discard(track_id)
                     # Clean up appearance extraction tracking too
-                    last_appearance_extraction.pop(track_id, None)
+                    persons_with_appearance_features.discard(track_id)
                 
                 last_cleanup = timestamp
             
