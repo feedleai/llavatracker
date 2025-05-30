@@ -486,8 +486,12 @@ def process_video(
                                 logger.error(f"Failed to update existing profile {matched_global_id}: {e}")
                         else:
                             # No appearance match - create new person with new ID
-                            new_global_id = next_global_id
-                            next_global_id += 1
+                            new_global_id = feature_db.get_next_global_id()  # Use database method for safety
+                            if new_global_id > next_global_id:
+                                next_global_id = new_global_id + 1
+                            else:
+                                new_global_id = next_global_id
+                                next_global_id += 1
                             total_unique_persons += 1
                             track_to_global_mapping[person.track_id] = new_global_id
                             logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (new appearance)")
@@ -500,11 +504,22 @@ def process_video(
                                 track_ids=[person.track_id]
                             )
                             new_profile.add_features(timestamp, None, appearance_description)
-                            feature_db.add_profile(new_profile)
+                            
+                            # Check if profile already exists before adding
+                            existing_check = feature_db.get_profile(new_global_id)
+                            if existing_check is None:
+                                feature_db.add_profile(new_profile)
+                                logger.info(f"Created new profile for person {new_global_id}")
+                            else:
+                                logger.warning(f"Profile {new_global_id} already exists, skipping creation")
                     else:
                         # No appearance extracted - create new person anyway
-                        new_global_id = next_global_id
-                        next_global_id += 1
+                        new_global_id = feature_db.get_next_global_id()  # Use database method for safety
+                        if new_global_id > next_global_id:
+                            next_global_id = new_global_id + 1
+                        else:
+                            new_global_id = next_global_id
+                            next_global_id += 1
                         total_unique_persons += 1
                         track_to_global_mapping[person.track_id] = new_global_id
                         logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (no appearance)")
@@ -516,7 +531,14 @@ def process_video(
                             last_seen=timestamp,
                             track_ids=[person.track_id]
                         )
-                        feature_db.add_profile(new_profile)
+                        
+                        # Check if profile already exists before adding
+                        existing_check = feature_db.get_profile(new_global_id)
+                        if existing_check is None:
+                            feature_db.add_profile(new_profile)
+                            logger.info(f"Created basic profile for person {new_global_id}")
+                        else:
+                            logger.warning(f"Basic profile {new_global_id} already exists, skipping creation")
                     
                     # Store features for JSON export
                     if person.track_id in track_to_global_mapping:
@@ -564,8 +586,12 @@ def process_video(
                     logger.error(f"Appearance feature extraction failed for track {person.track_id}: {e}")
                     # Still assign an ID even if extraction fails - but only if not already assigned
                     if person.track_id not in track_to_global_mapping:
-                        new_global_id = next_global_id
-                        next_global_id += 1
+                        new_global_id = feature_db.get_next_global_id()  # Use database method for safety
+                        if new_global_id > next_global_id:
+                            next_global_id = new_global_id + 1
+                        else:
+                            new_global_id = next_global_id
+                            next_global_id += 1
                         total_unique_persons += 1
                         track_to_global_mapping[person.track_id] = new_global_id
                         logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (extraction failed)")
@@ -577,7 +603,14 @@ def process_video(
                             last_seen=timestamp,
                             track_ids=[person.track_id]
                         )
-                        feature_db.add_profile(new_profile)
+                        
+                        # Check if profile already exists before adding
+                        existing_check = feature_db.get_profile(new_global_id)
+                        if existing_check is None:
+                            feature_db.add_profile(new_profile)
+                            logger.info(f"Created basic profile for person {new_global_id}")
+                        else:
+                            logger.warning(f"Basic profile {new_global_id} already exists, skipping creation")
                     else:
                         logger.debug(f"Track {person.track_id} already has global_id {track_to_global_mapping[person.track_id]}, skipping profile creation")
             
