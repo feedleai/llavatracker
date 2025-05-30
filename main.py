@@ -486,15 +486,15 @@ def process_video(
                                     
                                     logger.debug(f"Track {person.track_id} vs Person {profile.global_id}: {matches}/{total_checked} properties match, similarity = {appearance_similarity:.3f}")
                                     
-                                    # Make matching more realistic: require at least 50% property match AND minimum 3 properties matching
-                                    if appearance_similarity >= 0.5 and matches >= 3 and appearance_similarity > best_similarity:
+                                    # Strict matching: require at least 5 properties matching for same person
+                                    if matches >= 5 and appearance_similarity > best_similarity:
                                         best_similarity = appearance_similarity
                                         matched_global_id = profile.global_id
                                         logger.info(f"Strong appearance match found for track {person.track_id}: {matches}/{total_checked} properties match ({appearance_similarity:.3f}) with person {profile.global_id}")
                         
                         logger.info(f"Final match decision for track {person.track_id}: best_similarity={best_similarity:.3f}, matched_global_id={matched_global_id}")
                         
-                        if matched_global_id is not None and best_similarity >= 0.5:
+                        if matched_global_id is not None and best_similarity > 0.0:
                             # Found appearance match - assign to existing person
                             track_to_global_mapping[person.track_id] = matched_global_id
                             logger.info(f"✅ Track {person.track_id} assigned to existing person {matched_global_id} via appearance match (similarity: {best_similarity:.3f})")
@@ -533,7 +533,14 @@ def process_video(
                                 next_global_id += 1
                             total_unique_persons += 1
                             track_to_global_mapping[person.track_id] = new_global_id
-                            logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (no good appearance match, best was {best_similarity:.3f})")
+                            
+                            # Show why they didn't match (how many properties matched with best candidate)
+                            if best_similarity > 0.0:
+                                # Calculate matches for the best candidate for logging
+                                best_matches = int(best_similarity * 16)  # Estimate based on 16 string properties
+                                logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (best match had only {best_matches} properties, need 5+ for same person)")
+                            else:
+                                logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (no meaningful appearance matches found)")
                             
                             # Create new profile
                             new_profile = PersonProfile(
@@ -798,7 +805,8 @@ def process_video(
                     f"Total unique: {total_unique_persons} | "
                     f"New IDs: {len(reid_result.new_global_ids)} | "
                     f"Reused IDs: {len(reid_result.reused_global_ids)} | "
-                    f"JSON entries: {len(person_features)}"
+                    f"JSON entries: {len(person_features)} | "
+                    f"Matching rule: 5+ properties required"
                 )
     
     finally:
