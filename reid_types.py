@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # Basic types
 BoundingBox = Tuple[float, float, float, float]  # x1, y1, x2, y2
@@ -17,6 +17,8 @@ Confidence = float
 
 class AppearanceDescription(BaseModel):
     """Structured appearance description from LLaVA with detailed color and style information."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
     # Basic information
     gender_guess: Optional[str] = None
     age_range: Optional[str] = None
@@ -61,6 +63,7 @@ class TrackedPerson:
 
 class PersonProfile(BaseModel):
     """Persistent profile for a person across frames."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     global_id: GlobalID
     first_seen: datetime
     last_seen: datetime
@@ -83,6 +86,7 @@ class PersonProfile(BaseModel):
 
 class TrackingResult(BaseModel):
     """Results from tracking a single frame."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     frame_id: FrameID
     timestamp: datetime
     tracked_persons: List[TrackedPerson]
@@ -90,6 +94,7 @@ class TrackingResult(BaseModel):
 
 class ReIDResult(BaseModel):
     """Results from re-identification processing."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     frame_id: FrameID
     timestamp: datetime
     assignments: Dict[TrackID, GlobalID]  # Track ID -> Global ID mapping
