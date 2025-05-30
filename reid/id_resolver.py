@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
 
-from ..types import (
+from ..reid_types import (
     TrackedPerson,
     PersonProfile,
     GlobalID,

@@ -21,7 +21,7 @@ from .reid.feature_database import TimeDecayFeatureDatabase
 from .reid.sqlite_database import SQLiteFeatureDatabase
 from .reid.id_resolver import IDResolver
 from .utils.image_cropper import ImageCropper
-from .types import TrackingResult, ReIDResult
+from .reid_types import TrackingResult, ReIDResult
 
 def setup_logging(config: dict) -> None:
     """Configure logging based on config."""

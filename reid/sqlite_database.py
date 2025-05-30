@@ -10,7 +10,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ..types import (
+from ..reid_types import (
     TrackedPerson,
     PersonProfile,
     GlobalID,

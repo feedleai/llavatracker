@@ -1,6 +1,6 @@
 # Hybrid Person Re-Identification System
 
-A robust person re-identification system that combines YOLOv8 detection, ByteTrack tracking, and multimodal feature extraction (CLIP, face embeddings, and LLaVA appearance descriptions) for persistent person identification across video frames.
+A robust person re-identification system that combines YOLOv8 detection, ByteTrack tracking, and multimodal feature extraction (face embeddings and LLaVA appearance descriptions) for persistent person identification across video frames.
 
 ## Features
 
@@ -8,7 +8,7 @@ A robust person re-identification system that combines YOLOv8 detection, ByteTra
 - **ByteTrack Tracking**: State-of-the-art multi-object tracking for person association
 - **Multimodal Feature Extraction**:
   - Face embeddings using InsightFace for robust face recognition
-  - Detailed appearance descriptions via LLaVA (hair color, clothing colors/types, etc.)
+  - Detailed appearance descriptions via local LLaVA model (hair color, clothing colors/types, etc.)
 - **80% Similarity Threshold**: Robust re-identification with 80% feature matching
 - **Persistent SQLite Database**: Stores person profiles for long-term re-identification
 - **Smart Feature Extraction**: Only processes new persons to optimize performance
@@ -25,40 +25,75 @@ A robust person re-identification system that combines YOLOv8 detection, ByteTra
 5. **ID Assignment**: Assign same global ID if 80%+ feature similarity found
 6. **Visualization**: Display global person IDs (P1, P2, etc.) above heads
 
-## Installation
+## Installation & Setup
+
+### 1. Install Dependencies
 
 ```bash
 # Clone the repository
-git clone https://github.com/feedleai/llavatracker
+git clone <repository-url>
 cd hybrid_reid
 
 # Install dependencies
 pip install -r requirements.txt
+```
 
-# Set up LLaVA API key (if using LLaVA features)
-export LLAVA_API_KEY="your-api-key-here"
+### 2. Start Local LLaVA Server
+
+The system uses a local LLaVA model served via vLLM. Start the server in a separate terminal:
+
+```bash
+# Install vLLM (if not already installed)
+pip install vllm
+
+# Start the LLaVA server (this will download the model on first run)
+vllm serve liuhaotian/llava-v1.5-7b
+```
+
+**Note**: The first run will download the LLaVA-1.5-7B model (~13GB). Subsequent runs will use the cached model.
+
+### 3. Verify Server is Running
+
+The server should start at `http://localhost:8000`. You can test it with:
+
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "model": "liuhaotian/llava-v1.5-7b",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 50
+  }'
 ```
 
 ## Usage
 
-### Basic Usage
+### Basic Usage with test2.mp4
 
 ```bash
-python -m hybrid_reid.main --video_path path/to/video.mp4 --output path/to/output.mp4
+# Run with LLaVA enabled (server must be running)
+python example_usage.py --video_path test2.mp4
+
+# Run without LLaVA (face recognition only)
+python example_usage.py --video_path test2.mp4 --disable_llava
 ```
 
-### With Custom Configuration
+### Advanced Usage
 
 ```bash
-python -m hybrid_reid.main \
-    --video_path path/to/video.mp4 \
-    --config config/custom.yaml \
-    --output path/to/output.mp4
+# Custom output directory
+python example_usage.py --video_path test2.mp4 --output_dir ./my_results
+
+# Custom configuration
+python example_usage.py --video_path test2.mp4 --config my_config.yaml
+
+# Direct main module usage
+python -m hybrid_reid.main --video_path test2.mp4 --output output.mp4
 ```
 
-### Configuration Options
+## Configuration
 
-Key configuration parameters in `config/default.yaml`:
+Key settings in `config/default.yaml`:
 
 ```yaml
 # Re-identification Settings
@@ -66,33 +101,44 @@ reid:
   feature_matching:
     min_similarity: 0.8  # 80% similarity threshold
   database:
-    db_path: "reid_profiles.db"  # SQLite database path
+    db_path: "reid_profiles.db"
+
+# Local LLaVA Settings
+features:
+  llava:
+    enabled: true
+    server_url: "http://localhost:8000"
+    model_name: "liuhaotian/llava-v1.5-7b"
+  face:
+    enabled: true
+    similarity_threshold: 0.6
 
 # Tracking Settings  
 tracker:
   byte_track:
-    model_path: "yolov8n.pt"  # YOLOv8 model
+    model_path: "yolov8n.pt"  # Will download automatically
     track_thresh: 0.5
-
-# Visualization (clean display)
-visualization:
-  show_track_ids: false
-  show_global_ids: true
-  show_confidence: false
 ```
+
+## System Requirements
+
+- **Python**: 3.8+
+- **GPU**: CUDA-capable GPU recommended (for LLaVA and YOLOv8)
+- **RAM**: 16GB+ recommended (LLaVA model uses ~8GB VRAM)
+- **Disk**: ~15GB for models and cache
 
 ## Key Components
 
-### 1. Enhanced LLaVA Extractor
-Extracts detailed appearance features:
-- Hair color and style
-- Shirt/pants/shoe colors and types
-- Accessories and dominant colors
+### 1. Local LLaVA Model
+- Runs via vLLM server on localhost:8000
+- Extracts detailed appearance features:
+  - Hair color and style
+  - Shirt/pants/shoe colors and types
+  - Accessories and dominant colors
 
 ### 2. SQLite Database
 Persistent storage with tables for:
 - Person profiles
-- CLIP embeddings
 - Face embeddings  
 - Appearance descriptions
 
@@ -113,26 +159,57 @@ The SQLite database contains:
 - `face_embeddings`: Face recognition embeddings
 - `appearances`: Detailed color and style descriptions
 
+## Example Output
+
+```bash
+✅ vLLM server is running at http://localhost:8000
+
+🎬 Processing video: test2.mp4
+📁 Output video: ./output/test2_reid.mp4
+🗃️ Database: ./output/reid_profiles.db
+
+Configuration:
+  - Similarity threshold: 0.8
+  - Face recognition: ✅ Enabled
+  - LLaVA appearance: ✅ Enabled
+  - LLaVA model: liuhaotian/llava-v1.5-7b
+
+🚀 Starting processing...
+```
+
+## Troubleshooting
+
+### vLLM Server Issues
+
+```bash
+# Check if server is running
+curl http://localhost:8000/health
+
+# Start server if not running
+vllm serve liuhaotian/llava-v1.5-7b
+
+# Use different port if 8000 is busy
+vllm serve liuhaotian/llava-v1.5-7b --port 8001
+```
+
+### Memory Issues
+
+If you encounter CUDA out of memory errors:
+
+```bash
+# Use smaller model or reduce batch size
+vllm serve liuhaotian/llava-v1.5-7b --gpu-memory-utilization 0.8
+
+# Or disable LLaVA and use face recognition only
+python example_usage.py --video_path test2.mp4 --disable_llava
+```
+
 ## Performance Optimization
 
 - Feature extraction only for new persons
 - Time-decay weighting for historical features
 - Efficient SQLite indexing
 - Configurable cleanup intervals
-
-## Requirements
-
-- Python 3.8+
-- CUDA-capable GPU (recommended)
-- LLaVA API access (for appearance descriptions)
-
-## Example Output
-
-```
-2024-01-01 12:00:00 | INFO | New person detected with track ID 1
-2024-01-01 12:00:00 | INFO | New person detected: assigned global ID P1 to track 1
-2024-01-01 12:00:05 | INFO | Re-identified person: track 15 matched to global P1 with 85.2% similarity
-```
 
 ## License
 

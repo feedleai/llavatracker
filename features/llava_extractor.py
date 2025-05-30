@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 import io
 
-from ..types import BoundingBox, AppearanceDescription
+from ..reid_types import BoundingBox, AppearanceDescription
 from .base import BaseAppearanceExtractor
 
 class LLaVAExtractor(BaseAppearanceExtractor):

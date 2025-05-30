@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from datetime import datetime, timedelta
 
-from ..types import (
+from ..reid_types import (
     TrackedPerson,
     PersonProfile,
     GlobalID,

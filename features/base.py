@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 import numpy as np
 from datetime import datetime
 
-from ..types import (
+from ..reid_types import (
     BoundingBox,
     TrackedPerson,
     AppearanceDescription

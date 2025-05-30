@@ -4,7 +4,7 @@ Utility for cropping images based on bounding boxes.
 
 import numpy as np
 from typing import Tuple, Optional
-from ..types import BoundingBox
+from ..reid_types import BoundingBox
 
 class ImageCropper:
     """Utility class for cropping images with padding and safety checks."""

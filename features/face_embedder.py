@@ -6,7 +6,7 @@ import insightface
 import numpy as np
 from typing import Optional
 
-from ..types import BoundingBox
+from ..reid_types import BoundingBox
 from .base import BaseFaceExtractor
 
 class InsightFaceEmbedder(BaseFaceExtractor):

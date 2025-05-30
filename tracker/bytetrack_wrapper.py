@@ -8,7 +8,7 @@ import numpy as np
 from datetime import datetime
 from ultralytics import YOLO
 
-from ..types import (
+from ..reid_types import (
     BoundingBox,
     TrackID,
     FrameID,
