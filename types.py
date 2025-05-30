@@ -16,14 +16,36 @@ FrameID = int
 Confidence = float
 
 class AppearanceDescription(BaseModel):
-    """Structured appearance description from LLaVA."""
+    """Structured appearance description from LLaVA with detailed color and style information."""
+    # Basic information
     gender_guess: Optional[str] = None
     age_range: Optional[str] = None
+    
+    # Hair details
+    hair_color: Optional[str] = None
+    hair_style: Optional[str] = None
+    
+    # Upper clothing details
+    shirt_color: Optional[str] = None
+    shirt_type: Optional[str] = None
+    
+    # Lower clothing details
+    pants_color: Optional[str] = None
+    pants_type: Optional[str] = None
+    
+    # Footwear details
+    shoe_color: Optional[str] = None
+    shoe_type: Optional[str] = None
+    
+    # Additional features
+    accessories: Optional[List[str]] = None
+    dominant_colors: Optional[List[str]] = None
+    
+    # Legacy fields for backward compatibility
     hair: Optional[str] = None
     upper_clothing: Optional[str] = None
     lower_clothing: Optional[str] = None
     footwear: Optional[str] = None
-    accessories: Optional[List[str]] = None
 
 @dataclass
 class TrackedPerson:
@@ -34,7 +56,6 @@ class TrackedPerson:
     frame_id: FrameID
     timestamp: datetime
     global_id: Optional[GlobalID] = None
-    clip_embedding: Optional[np.ndarray] = None
     face_embedding: Optional[np.ndarray] = None
     appearance: Optional[AppearanceDescription] = None
 
@@ -44,20 +65,16 @@ class PersonProfile(BaseModel):
     first_seen: datetime
     last_seen: datetime
     track_ids: List[TrackID] = Field(default_factory=list)
-    clip_embeddings: List[Tuple[datetime, np.ndarray]] = Field(default_factory=list)
     face_embeddings: List[Tuple[datetime, np.ndarray]] = Field(default_factory=list)
     appearances: List[Tuple[datetime, AppearanceDescription]] = Field(default_factory=list)
     
     def add_features(
         self,
         timestamp: datetime,
-        clip_embedding: Optional[np.ndarray] = None,
         face_embedding: Optional[np.ndarray] = None,
         appearance: Optional[AppearanceDescription] = None
     ) -> None:
         """Add new features to the profile with timestamp."""
-        if clip_embedding is not None:
-            self.clip_embeddings.append((timestamp, clip_embedding))
         if face_embedding is not None:
             self.face_embeddings.append((timestamp, face_embedding))
         if appearance is not None:

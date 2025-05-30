@@ -15,10 +15,10 @@ from loguru import logger
 
 from .tracker.bytetrack_wrapper import ByteTrackWrapper
 from .features.base import FeatureExtractionPipeline
-from .features.clip_embedder import CLIPEmbedder
 from .features.face_embedder import InsightFaceEmbedder
 from .features.llava_extractor import LLaVAExtractor
 from .reid.feature_database import TimeDecayFeatureDatabase
+from .reid.sqlite_database import SQLiteFeatureDatabase
 from .reid.id_resolver import IDResolver
 from .utils.image_cropper import ImageCropper
 from .types import TrackingResult, ReIDResult
@@ -61,6 +61,7 @@ def visualize_frame(
 ) -> np.ndarray:
     """
     Visualize tracking and re-identification results on frame.
+    Shows only global IDs above people's heads without bounding boxes.
     
     Args:
         frame: Input frame
@@ -76,7 +77,7 @@ def visualize_frame(
     # Create a copy of the frame for visualization
     vis_frame = frame.copy()
     
-    # Draw bounding boxes and IDs for each tracked person
+    # Draw only IDs above heads for each tracked person
     for track_id, global_id in result.assignments.items():
         # Find the tracked person
         person = next(
@@ -89,38 +90,26 @@ def visualize_frame(
         # Get color based on global ID
         color = colors[global_id % len(colors)]
         
-        # Draw bounding box
+        # Calculate position above the person's head
         x1, y1, x2, y2 = map(int, person.bbox)
+        center_x = (x1 + x2) // 2
+        head_y = max(y1 - 20, 20)  # Position above head, with minimum margin from top
+        
+        # Prepare text - only show global ID
+        text = f"P{global_id}"
+        
+        # Get text size
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = vis_config.get("text_scale", 0.8)
+        thickness = 2
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        
+        # Draw text background for better visibility
+        bg_margin = 5
         cv2.rectangle(
             vis_frame,
-            (x1, y1),
-            (x2, y2),
-            color,
-            vis_config["box_thickness"]
-        )
-        
-        # Prepare text
-        text_parts = []
-        if vis_config["show_track_ids"]:
-            text_parts.append(f"T{track_id}")
-        if vis_config["show_global_ids"]:
-            text_parts.append(f"G{global_id}")
-        if vis_config["show_confidence"]:
-            text_parts.append(f"{person.confidence:.2f}")
-        
-        text = " | ".join(text_parts)
-        
-        # Draw text background
-        (text_w, text_h), _ = cv2.getTextSize(
-            text,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            vis_config["text_scale"],
-            1
-        )
-        cv2.rectangle(
-            vis_frame,
-            (x1, y1 - text_h - 4),
-            (x1 + text_w, y1),
+            (center_x - text_w // 2 - bg_margin, head_y - text_h - bg_margin),
+            (center_x + text_w // 2 + bg_margin, head_y + baseline + bg_margin),
             color,
             -1
         )
@@ -129,11 +118,11 @@ def visualize_frame(
         cv2.putText(
             vis_frame,
             text,
-            (x1, y1 - 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            vis_config["text_scale"],
-            (255, 255, 255),
-            1
+            (center_x - text_w // 2, head_y),
+            font,
+            font_scale,
+            (255, 255, 255),  # White text
+            thickness
         )
     
     return vis_frame
@@ -155,19 +144,17 @@ def process_video(
     tracker = ByteTrackWrapper(config["tracker"]["byte_track"])
     
     # Initialize feature extractors
-    clip_extractor = CLIPEmbedder()
     face_extractor = InsightFaceEmbedder() if config["features"]["face"]["enabled"] else None
     llava_extractor = LLaVAExtractor() if config["features"]["llava"]["enabled"] else None
     
     feature_pipeline = FeatureExtractionPipeline(
-        clip_extractor=clip_extractor,
         face_extractor=face_extractor,
         appearance_extractor=llava_extractor,
         config=config["features"]
     )
     
-    # Initialize re-identification components
-    feature_db = TimeDecayFeatureDatabase(config["reid"])
+    # Initialize re-identification components with SQLite database
+    feature_db = SQLiteFeatureDatabase(config["reid"])
     id_resolver = IDResolver(config["reid"])
     
     # Open video
@@ -196,6 +183,9 @@ def process_video(
     last_cleanup = datetime.now()
     cleanup_interval = timedelta(seconds=config["reid"]["database"]["cleanup_interval"])
     
+    # Track which persons we've seen to only extract features for new ones
+    seen_track_ids = set()
+    
     try:
         while True:
             ret, frame = cap.read()
@@ -205,14 +195,20 @@ def process_video(
             # Process frame
             timestamp = datetime.now()
             
-            # Track persons
+            # Track persons using YOLO + ByteTrack
             tracking_result = tracker.update(frame, frame_id)
             
-            # Extract features for each tracked person
+            # Identify new persons and extract features only for them
+            new_persons = []
             for person in tracking_result.tracked_persons:
-                feature_pipeline.extract_features(frame, person)
+                if person.track_id not in seen_track_ids:
+                    # New person detected - extract features
+                    logger.info(f"New person detected with track ID {person.track_id}")
+                    feature_pipeline.extract_features(frame, person)
+                    new_persons.append(person)
+                    seen_track_ids.add(person.track_id)
             
-            # Resolve IDs
+            # Resolve IDs for all tracked persons
             reid_result = id_resolver.resolve_ids(
                 tracking_result.tracked_persons,
                 feature_db,
@@ -220,7 +216,10 @@ def process_video(
                 timestamp
             )
             
-            # Visualize results
+            # Update the ReIDResult frame for visualization
+            reid_result.frame = frame
+            
+            # Visualize results (only showing global IDs above heads)
             vis_frame = visualize_frame(frame, reid_result, config)
             
             # Write frame if output is enabled
@@ -228,7 +227,7 @@ def process_video(
                 writer.write(vis_frame)
             
             # Display frame
-            cv2.imshow("ReID", vis_frame)
+            cv2.imshow("Person Re-ID", vis_frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
             
@@ -244,6 +243,7 @@ def process_video(
                 logger.info(
                     f"Processed frame {frame_id} | "
                     f"Tracked: {len(tracking_result.tracked_persons)} | "
+                    f"New persons: {len(new_persons)} | "
                     f"New IDs: {len(reid_result.new_global_ids)} | "
                     f"Reused IDs: {len(reid_result.reused_global_ids)}"
                 )
@@ -255,6 +255,7 @@ def process_video(
             writer.release()
         cv2.destroyAllWindows()
         feature_pipeline.cleanup()
+        feature_db.close()
 
 def main():
     """Main entry point."""

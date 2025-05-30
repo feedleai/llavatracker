@@ -1,5 +1,5 @@
 """
-BoT-SORT tracker wrapper using Ultralytics YOLO for person detection and tracking.
+YOLOv8 person detection with ByteTrack tracking wrapper.
 """
 
 from abc import ABC, abstractmethod
@@ -35,15 +35,15 @@ class BaseTracker(ABC):
         """Reset the tracker state."""
         pass
 
-class BoTSORTWrapper(BaseTracker):
-    """Wrapper for BoT-SORT tracking algorithm using Ultralytics YOLO."""
+class ByteTrackWrapper(BaseTracker):
+    """YOLOv8 + ByteTrack wrapper for person detection and tracking."""
     
     def __init__(self, config: dict):
         """
-        Initialize BoT-SORT wrapper.
+        Initialize ByteTrack wrapper with YOLOv8.
         
         Args:
-            config: Dictionary containing BoT-SORT configuration parameters
+            config: Dictionary containing tracking configuration parameters
         """
         self.config = config
         self.model = None
@@ -52,36 +52,32 @@ class BoTSORTWrapper(BaseTracker):
     
     def initialize(self, config: dict) -> None:
         """
-        Initialize BoT-SORT with YOLO model.
+        Initialize YOLOv8 with ByteTrack tracker.
         
         Args:
             config: Dictionary containing parameters:
                 - model_path: Path to YOLO model (default: 'yolov8n.pt')
-                - conf_threshold: Detection confidence threshold (default: 0.3)
-                - iou_threshold: NMS IOU threshold (default: 0.5)
+                - conf_threshold: Detection confidence threshold
+                - iou_threshold: NMS IOU threshold
                 - device: Device to run on ('cpu', 'cuda', etc.)
-                - tracker: Tracker type ('botsort.yaml')
+                - track_thresh: ByteTrack track threshold
+                - track_buffer: ByteTrack track buffer
+                - match_thresh: ByteTrack match threshold
         """
         model_path = config.get('model_path', 'yolov8n.pt')
-        self.conf_threshold = config.get('conf_threshold', 0.3)
-        self.iou_threshold = config.get('iou_threshold', 0.5)
+        self.conf_threshold = config.get('track_thresh', 0.5)
+        self.iou_threshold = config.get('iou_threshold', 0.7)
         self.device = config.get('device', 'cuda' if self._cuda_available() else 'cpu')
-        tracker_config = config.get('tracker', 'botsort.yaml')
         
-        # Initialize YOLO model with BoT-SORT tracker
+        # Initialize YOLOv8 model
         self.model = YOLO(model_path)
         
-        # Configure tracker
-        self.model.track(
-            source=np.zeros((640, 640, 3), dtype=np.uint8),  # Dummy frame for initialization
-            tracker=tracker_config,
-            persist=True,
-            verbose=False
-        )
+        # Configure the model for tracking
+        self.model.to(self.device)
     
     def update(self, frame: np.ndarray, frame_id: FrameID) -> TrackingResult:
         """
-        Update tracking with a new frame.
+        Update tracking with a new frame using YOLOv8 + ByteTrack.
         
         Args:
             frame: Input frame as numpy array (H, W, C)
@@ -94,13 +90,14 @@ class BoTSORTWrapper(BaseTracker):
         tracked_persons = []
         
         if self.model is not None:
-            # Run YOLO detection and tracking
+            # Run YOLOv8 detection and tracking with ByteTrack
             results = self.model.track(
                 source=frame,
                 conf=self.conf_threshold,
                 iou=self.iou_threshold,
                 device=self.device,
                 classes=[0],  # Only detect persons (class 0 in COCO)
+                tracker="bytetrack.yaml",  # Use ByteTrack
                 persist=True,
                 verbose=False
             )
@@ -114,14 +111,19 @@ class BoTSORTWrapper(BaseTracker):
                     track_ids = result.boxes.id.cpu().numpy().astype(int)
                     
                     for bbox, conf, track_id in zip(boxes, confidences, track_ids):
-                        tracked_person = TrackedPerson(
-                            track_id=track_id,
-                            bbox=self._convert_bbox(bbox),
-                            confidence=float(conf),
-                            timestamp=timestamp,
-                            features={}  # Will be populated by feature extractors
-                        )
-                        tracked_persons.append(tracked_person)
+                        # Filter minimum box area if specified
+                        min_area = self.config.get('min_box_area', 100)
+                        bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                        
+                        if bbox_area >= min_area:
+                            tracked_person = TrackedPerson(
+                                track_id=int(track_id),
+                                bbox=self._convert_bbox(bbox),
+                                confidence=float(conf),
+                                frame_id=frame_id,
+                                timestamp=timestamp
+                            )
+                            tracked_persons.append(tracked_person)
         
         self.frame_id = frame_id
         
@@ -157,7 +159,4 @@ class BoTSORTWrapper(BaseTracker):
             import torch
             return torch.cuda.is_available()
         except ImportError:
-            return False
-
-# Keep ByteTrackWrapper as an alias for backward compatibility
-ByteTrackWrapper = BoTSORTWrapper 
+            return False 

@@ -1,9 +1,5 @@
 # Feature Extraction Settings
 features:
-  clip:
-    enabled: true
-    model: "ViT-B/32"
-    similarity_threshold: 0.75
   face:
     enabled: true
     similarity_threshold: 0.6
@@ -20,20 +16,25 @@ reid:
     tau: 300.0  # seconds
     min_weight: 0.1
   feature_matching:
-    min_similarity: 0.7
+    min_similarity: 0.8  # 80% similarity threshold for robust re-identification
     required_match_percentage: 0.8
   database:
+    db_path: "reid_profiles.db"  # SQLite database path
     max_profiles: 1000
     cleanup_interval: 3600  # seconds
+  track_timeout: 30  # seconds before considering a track truly lost
 
 # Tracking Settings
 tracker:
   byte_track:
+    model_path: "yolov8n.pt"  # YOLOv8 model for person detection
     track_thresh: 0.5
     track_buffer: 30
     match_thresh: 0.8
     min_box_area: 100
     mot20: false
+    iou_threshold: 0.7
+    device: "auto"  # "cpu", "cuda", or "auto"
 
 # Logging Settings
 logging:
@@ -44,15 +45,19 @@ logging:
 
 # Visualization Settings
 visualization:
-  show_track_ids: true
+  show_track_ids: false  # Only show global IDs
   show_global_ids: true
-  show_confidence: true
-  box_thickness: 2
-  text_scale: 0.6
+  show_confidence: false
+  box_thickness: 2  # Not used anymore (no bounding boxes)
+  text_scale: 0.8  # Larger text for better visibility
   colors:
     - [255, 0, 0]    # Red
     - [0, 255, 0]    # Green
     - [0, 0, 255]    # Blue
     - [255, 255, 0]  # Yellow
     - [255, 0, 255]  # Magenta
-    - [0, 255, 255]  # Cyan 
+    - [0, 255, 255]  # Cyan
+    - [255, 165, 0]  # Orange
+    - [128, 0, 128]  # Purple
+    - [255, 192, 203] # Pink
+    - [0, 128, 0]    # Dark Green 

@@ -95,7 +95,6 @@ class FeatureExtractionPipeline:
     
     def __init__(
         self,
-        clip_extractor: BaseFeatureExtractor,
         face_extractor: Optional[BaseFaceExtractor] = None,
         appearance_extractor: Optional[BaseAppearanceExtractor] = None,
         config: Optional[Dict[str, Any]] = None
@@ -104,18 +103,15 @@ class FeatureExtractionPipeline:
         Initialize feature extraction pipeline.
         
         Args:
-            clip_extractor: CLIP feature extractor
             face_extractor: Optional face feature extractor
             appearance_extractor: Optional appearance description extractor
             config: Configuration dictionary
         """
-        self.clip_extractor = clip_extractor
         self.face_extractor = face_extractor
         self.appearance_extractor = appearance_extractor
         self.config = config or {}
         
         # Initialize all extractors
-        self.clip_extractor.initialize(self.config.get("clip", {}))
         if self.face_extractor:
             self.face_extractor.initialize(self.config.get("face", {}))
         if self.appearance_extractor:
@@ -136,11 +132,6 @@ class FeatureExtractionPipeline:
         Returns:
             Updated TrackedPerson with extracted features
         """
-        # Extract CLIP features
-        clip_embedding = self.clip_extractor.extract(image, person.bbox)
-        if clip_embedding is not None:
-            person.clip_embedding = clip_embedding
-        
         # Extract face features if available
         if self.face_extractor:
             face_bbox = self.face_extractor.detect_face(image, person.bbox)
@@ -161,7 +152,6 @@ class FeatureExtractionPipeline:
     
     def cleanup(self) -> None:
         """Clean up all extractors."""
-        self.clip_extractor.cleanup()
         if self.face_extractor:
             self.face_extractor.cleanup()
         if self.appearance_extractor:
