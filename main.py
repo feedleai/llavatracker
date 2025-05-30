@@ -14,6 +14,7 @@ import numpy as np
 from loguru import logger
 import time
 import json
+import pickle
 
 from .tracker.bytetrack_wrapper import ByteTrackWrapper
 from .features.base import FeatureExtractionPipeline
@@ -459,13 +460,30 @@ def process_video(
                             track_to_global_mapping[person.track_id] = matched_global_id
                             logger.info(f"Track {person.track_id} assigned to existing person {matched_global_id} via appearance match")
                             
-                            # Update existing profile
-                            existing_profile = feature_db.get_profile(matched_global_id)
-                            if existing_profile:
-                                existing_profile.add_features(timestamp, None, appearance_description)
-                                existing_profile.track_ids.append(person.track_id)
-                                existing_profile.last_seen = timestamp
-                                feature_db.update_profile(existing_profile)
+                            # Add new appearance data directly to the database
+                            try:
+                                # Insert the new appearance data
+                                feature_db._insert_appearance(matched_global_id, timestamp, appearance_description)
+                                
+                                # Update the profile's basic info (last_seen and track_ids)
+                                existing_profile = feature_db.get_profile(matched_global_id)
+                                if existing_profile:
+                                    if person.track_id not in existing_profile.track_ids:
+                                        existing_profile.track_ids.append(person.track_id)
+                                    existing_profile.last_seen = timestamp
+                                    
+                                    # Update only the basic profile info, not the features
+                                    cursor = feature_db.conn.cursor()
+                                    cursor.execute("""
+                                        UPDATE person_profiles 
+                                        SET last_seen = ?, track_ids = ?
+                                        WHERE global_id = ?
+                                    """, (existing_profile.last_seen, json.dumps(existing_profile.track_ids), matched_global_id))
+                                    feature_db.conn.commit()
+                                    
+                                logger.info(f"Added new appearance data to existing person {matched_global_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to update existing profile {matched_global_id}: {e}")
                         else:
                             # No appearance match - create new person with new ID
                             new_global_id = next_global_id
@@ -581,12 +599,19 @@ def process_video(
                         # Add face features to existing person profile
                         if face_embedding is not None:
                             existing_global_id = track_to_global_mapping[person.track_id]
-                            existing_profile = feature_db.get_profile(existing_global_id)
+                            logger.info(f"Adding face embedding to existing person {existing_global_id} (track {person.track_id})")
                             
-                            if existing_profile:
-                                logger.info(f"Adding face embedding to existing person {existing_global_id} (track {person.track_id})")
-                                existing_profile.add_features(timestamp, face_embedding, None)
-                                feature_db.update_profile(existing_profile)
+                            try:
+                                # Insert the face embedding directly
+                                cursor = feature_db.conn.cursor()
+                                cursor.execute("""
+                                    INSERT INTO face_embeddings (global_id, timestamp, embedding)
+                                    VALUES (?, ?, ?)
+                                """, (existing_global_id, timestamp, pickle.dumps(face_embedding)))
+                                feature_db.conn.commit()
+                                logger.info(f"Face embedding added to person {existing_global_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to add face embedding to person {existing_global_id}: {e}")
                     
                     except Exception as e:
                         logger.error(f"Face feature extraction failed for track {person.track_id}: {e}")
