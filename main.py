@@ -488,14 +488,14 @@ def process_video(
                                     logger.debug(f"Track {person.track_id} vs Person {profile.global_id}: {matches}/{total_checked} properties match, similarity = {appearance_similarity:.3f}")
                                     
                                     # Strict matching: require 95%+ similarity for same person
-                                    if appearance_similarity > 0.95 and appearance_similarity > best_similarity:
+                                    if appearance_similarity > 0.5 and appearance_similarity > best_similarity:
                                         best_similarity = appearance_similarity
                                         matched_global_id = profile.global_id
                                         logger.info(f"Strong appearance match found for track {person.track_id}: {matches}/{total_checked} properties match ({appearance_similarity:.1%}) with person {profile.global_id}")
                         
                         logger.info(f"Final match decision for track {person.track_id}: best_similarity={best_similarity:.1%}, matched_global_id={matched_global_id}")
                         
-                        if matched_global_id is not None and best_similarity > 0.95:
+                        if matched_global_id is not None and best_similarity > 0.5:
                             # Found appearance match - assign to existing person
                             track_to_global_mapping[person.track_id] = matched_global_id
                             logger.info(f"✅ Track {person.track_id} assigned to existing person {matched_global_id} via appearance match (similarity: {best_similarity:.1%})")
