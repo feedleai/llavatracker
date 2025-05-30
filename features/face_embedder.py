@@ -14,7 +14,6 @@ class InsightFaceEmbedder(BaseFaceExtractor):
     
     def __init__(self):
         self.model = None
-        self.detector = None
     
     def initialize(self, config: dict) -> None:
         """Initialize InsightFace model."""
@@ -23,22 +22,21 @@ class InsightFaceEmbedder(BaseFaceExtractor):
             root="models"
         )
         self.model.prepare(ctx_id=0)  # Use GPU if available
-        self.detector = self.model.models["detection"]
     
     def detect_face(self, image: np.ndarray, bbox: BoundingBox) -> Optional[BoundingBox]:
         """Detect face within person bounding box."""
-        if self.detector is None:
+        if self.model is None:
             return None
             
         x1, y1, x2, y2 = map(int, bbox)
         crop = image[y1:y2, x1:x2]
-        faces = self.detector.get(crop)
+        faces = self.model.get(crop)
         
         if not faces:
             return None
             
         # Get largest face
-        face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
+        face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
         fx1, fy1, fx2, fy2 = face.bbox.astype(int)
         
         # Convert back to original image coordinates
@@ -57,10 +55,9 @@ class InsightFaceEmbedder(BaseFaceExtractor):
             return None
             
         # Get embedding from largest face
-        face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
+        face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
         return face.embedding
     
     def cleanup(self) -> None:
         """Clean up resources."""
-        self.model = None
-        self.detector = None 
+        self.model = None 
