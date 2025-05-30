@@ -49,7 +49,8 @@ class IDResolver:
         tracked_persons: List[TrackedPerson],
         feature_db,  # SQLiteFeatureDatabase
         frame_id: int,
-        timestamp: datetime
+        timestamp: datetime,
+        frame=None  # Add frame parameter
     ) -> ReIDResult:
         """
         Resolve track IDs to global IDs for a frame with enhanced re-identification.
@@ -59,6 +60,7 @@ class IDResolver:
             feature_db: SQLite feature database for matching
             frame_id: Current frame ID
             timestamp: Current frame timestamp
+            frame: Optional frame image
             
         Returns:
             ReIDResult containing ID assignments and frame
@@ -134,7 +136,7 @@ class IDResolver:
             assignments=assignments,
             new_global_ids=new_global_ids,
             reused_global_ids=reused_global_ids,
-            frame=tracked_persons[0].frame if tracked_persons else None
+            frame=frame  # Use the passed frame parameter
         )
     
     def _get_next_global_id(self, feature_db) -> GlobalID:

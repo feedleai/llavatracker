@@ -289,11 +289,9 @@ def process_video(
                 tracking_result.tracked_persons,
                 feature_db,
                 frame_id,
-                timestamp
+                timestamp,
+                frame
             )
-            
-            # Update the ReIDResult frame for visualization
-            reid_result.frame = frame
             
             # Calculate FPS
             frame_end_time = time.time()
