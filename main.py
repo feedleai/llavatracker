@@ -63,7 +63,10 @@ def visualize_frame(
     frame_id: int = 0,
     fps: float = 0.0,
     total_persons: int = 0,
-    new_persons_count: int = 0
+    new_persons_count: int = 0,
+    person_detection_times: dict = None,  # Add detection times
+    persons_with_features: set = None,   # Add feature status
+    current_timestamp: datetime = None   # Add current timestamp
 ) -> np.ndarray:
     """
     Visualize tracking and re-identification results on frame.
@@ -79,6 +82,9 @@ def visualize_frame(
         fps: Current processing FPS
         total_persons: Total unique persons seen so far
         new_persons_count: Number of new persons in this frame
+        person_detection_times: Dictionary to track detection times
+        persons_with_features: Set to track which persons have had features extracted
+        current_timestamp: Current timestamp for comparison
         
     Returns:
         Annotated frame
@@ -89,26 +95,37 @@ def visualize_frame(
     # Create a copy of the frame for visualization
     vis_frame = frame.copy()
     
-    # Draw only IDs above heads for each tracked person
-    for track_id, global_id in result.assignments.items():
-        # Find the tracked person
-        person = next(
-            (p for p in tracked_persons if p.track_id == track_id),
-            None
-        )
-        if person is None:
-            continue
-        
-        # Get color based on global ID
-        color = colors[global_id % len(colors)]
+    # Draw IDs and status above heads for each tracked person
+    for person in tracked_persons:
+        track_id = person.track_id
         
         # Calculate position above the person's head
         x1, y1, x2, y2 = map(int, person.bbox)
         center_x = (x1 + x2) // 2
         head_y = max(y1 - 20, 20)  # Position above head, with minimum margin from top
         
-        # Prepare text - only show global ID
-        text = f"P{global_id}"
+        # Determine what to display based on person's status
+        if track_id in result.assignments:
+            # Person has been assigned a global ID
+            global_id = result.assignments[track_id]
+            color = colors[global_id % len(colors)]
+            text = f"P{global_id}"
+        elif (person_detection_times and persons_with_features and 
+              track_id in person_detection_times and 
+              track_id not in persons_with_features):
+            # Person is waiting for feature extraction
+            if current_timestamp:
+                time_waiting = current_timestamp - person_detection_times[track_id]
+                remaining_time = max(0, 2.0 - time_waiting.total_seconds())
+                color = (0, 255, 255)  # Yellow for waiting
+                text = f"Wait {remaining_time:.1f}s"
+            else:
+                color = (0, 255, 255)  # Yellow for waiting
+                text = "Waiting..."
+        else:
+            # Fallback for unknown state
+            color = (128, 128, 128)  # Gray
+            text = f"T{track_id}"
         
         # Get text size
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -146,10 +163,18 @@ def visualize_frame(
     bg_color = (0, 0, 0)  # Black background
     
     # Prepare statistics text
+    waiting_count = 0
+    if person_detection_times and persons_with_features:
+        waiting_count = len([
+            track_id for track_id in person_detection_times.keys()
+            if track_id not in persons_with_features
+        ])
+    
     stats_lines = [
         f"Frame: {frame_id}",
         f"FPS: {fps:.1f}",
         f"Tracked: {len(tracked_persons)}",
+        f"Waiting: {waiting_count}",
         f"Total Persons: {total_persons}",
         f"New This Frame: {new_persons_count}",
         f"Press 'q' to quit"
@@ -249,6 +274,11 @@ def process_video(
     seen_track_ids = set()
     total_unique_persons = 0
     
+    # Track when persons were first detected (for 2-second delay)
+    person_detection_times = {}  # track_id -> first_detection_timestamp
+    persons_with_features = set()  # track_ids that have had features extracted
+    feature_extraction_delay = timedelta(seconds=2)  # 2-second delay
+    
     # For FPS calculation
     frame_start_time = time.time()
     fps_history = []
@@ -275,16 +305,32 @@ def process_video(
             # Track persons using YOLO + ByteTrack
             tracking_result = tracker.update(frame, frame_id)
             
-            # Identify new persons and extract features only for them
+            # Identify new persons and track detection times
             new_persons = []
+            persons_ready_for_features = []
+            
             for person in tracking_result.tracked_persons:
+                # Track when this person was first detected
                 if person.track_id not in seen_track_ids:
-                    # New person detected - extract features
-                    logger.info(f"New person detected with track ID {person.track_id}")
-                    feature_pipeline.extract_features(frame, person)
+                    person_detection_times[person.track_id] = timestamp
                     new_persons.append(person)
                     seen_track_ids.add(person.track_id)
                     total_unique_persons += 1
+                    logger.info(f"New person detected with track ID {person.track_id}, waiting 2 seconds for feature extraction")
+                
+                # Check if this person is ready for feature extraction (2 seconds have passed)
+                if (person.track_id not in persons_with_features and 
+                    person.track_id in person_detection_times):
+                    time_since_detection = timestamp - person_detection_times[person.track_id]
+                    if time_since_detection >= feature_extraction_delay:
+                        persons_ready_for_features.append(person)
+                        persons_with_features.add(person.track_id)
+                        logger.info(f"Person {person.track_id} ready for feature extraction after {time_since_detection.total_seconds():.1f} seconds")
+            
+            # Extract features only for persons who have waited 2 seconds
+            for person in persons_ready_for_features:
+                logger.info(f"Extracting features for person with track ID {person.track_id}")
+                feature_pipeline.extract_features(frame, person)
             
             # Resolve IDs for all tracked persons
             reid_result = id_resolver.resolve_ids(
@@ -313,7 +359,10 @@ def process_video(
                 frame_id=frame_id,
                 fps=avg_fps,
                 total_persons=total_unique_persons,
-                new_persons_count=len(new_persons)
+                new_persons_count=len(new_persons),
+                person_detection_times=person_detection_times,
+                persons_with_features=persons_with_features,
+                current_timestamp=timestamp
             )
             
             # Write frame if output is enabled
@@ -330,16 +379,33 @@ def process_video(
             # Cleanup old profiles periodically
             if timestamp - last_cleanup > cleanup_interval:
                 feature_db.cleanup_old_profiles(cleanup_interval)
+                
+                # Also cleanup old detection times for tracks no longer active
+                current_track_ids = {p.track_id for p in tracking_result.tracked_persons}
+                old_detection_times = [
+                    track_id for track_id in person_detection_times.keys()
+                    if track_id not in current_track_ids
+                ]
+                for track_id in old_detection_times:
+                    del person_detection_times[track_id]
+                    persons_with_features.discard(track_id)
+                
                 last_cleanup = timestamp
             
             frame_id += 1
             
             # Log progress
             if frame_id % config["logging"]["log_interval"] == 0:
+                waiting_count = len([
+                    track_id for track_id in person_detection_times.keys()
+                    if track_id not in persons_with_features
+                ])
                 logger.info(
                     f"Processed frame {frame_id} | "
                     f"FPS: {avg_fps:.1f} | "
                     f"Tracked: {len(tracking_result.tracked_persons)} | "
+                    f"Waiting: {waiting_count} | "
+                    f"Features extracted: {len(persons_ready_for_features)} | "
                     f"New persons: {len(new_persons)} | "
                     f"Total unique: {total_unique_persons} | "
                     f"New IDs: {len(reid_result.new_global_ids)} | "

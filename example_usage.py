@@ -153,7 +153,9 @@ def main():
     print("📺 Video preview window will open showing:")
     print("   • Real-time person tracking and re-identification")
     print("   • Global person IDs (P1, P2, etc.) above each person")
-    print("   • Live statistics (FPS, frame count, person count)")
+    print("   • 2-second wait timer for new persons before feature extraction")
+    print("   • Yellow 'Wait X.Xs' labels during the waiting period")
+    print("   • Live statistics (FPS, frame count, person count, waiting count)")
     print("   • Press 'q' in the video window to quit early")
     print("\n⏳ Please wait for the preview window to appear...")
     
