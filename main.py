@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 from loguru import logger
 import time
+import json
 
 from .tracker.bytetrack_wrapper import ByteTrackWrapper
 from .features.base import FeatureExtractionPipeline
@@ -214,6 +215,46 @@ def visualize_frame(
     
     return vis_frame
 
+def save_person_features_json(person_features: dict, output_path: str):
+    """
+    Save person appearance features to JSON file for debugging and monitoring.
+    Only saves structured appearance attributes in a clean, readable format.
+    
+    Args:
+        person_features: Dictionary containing all person features
+        output_path: Path to save the JSON file
+    """
+    try:
+        # Create clean JSON with only appearance attributes
+        json_features = {}
+        for person_id, features in person_features.items():
+            if "appearance_description" in features and features["appearance_description"]:
+                appearance = features["appearance_description"]
+                
+                # Extract only the structured appearance attributes
+                json_features[person_id] = {
+                    "gender_guess": appearance.get("gender_guess", "unknown"),
+                    "age_range": appearance.get("age_range", "unknown"),
+                    "hair_color": appearance.get("hair_color", "unknown"),
+                    "hair_style": appearance.get("hair_style", "unknown"),
+                    "shirt_color": appearance.get("shirt_color", "unknown"),
+                    "shirt_type": appearance.get("shirt_type", "unknown"),
+                    "pants_color": appearance.get("pants_color", "unknown"),
+                    "pants_type": appearance.get("pants_type", "unknown"),
+                    "shoe_color": appearance.get("shoe_color", "unknown"),
+                    "shoe_type": appearance.get("shoe_type", "unknown"),
+                    "accessories": appearance.get("accessories", []),
+                    "dominant_colors": appearance.get("dominant_colors", [])
+                }
+        
+        # Save to JSON file with pretty formatting
+        with open(output_path, 'w') as f:
+            json.dump(json_features, f, indent=2, ensure_ascii=False)
+        
+        logger.debug(f"Person appearance features saved to {output_path}")
+    except Exception as e:
+        logger.error(f"Failed to save person features to JSON: {e}")
+
 def process_video(
     video_path: str,
     config: dict,
@@ -243,6 +284,10 @@ def process_video(
     # Initialize re-identification components with SQLite database
     feature_db = SQLiteFeatureDatabase(config["reid"])
     id_resolver = IDResolver(config["reid"])
+    
+    # Initialize person features tracking for JSON export
+    person_features = {}  # Will store: {person_id: {feature_type: data}}
+    json_output_path = Path(video_path).parent / "person_features.json"
     
     # Open video
     cap = cv2.VideoCapture(video_path)
@@ -293,6 +338,7 @@ def process_video(
         print("  - Press 'q' to quit")
         print("  - Resize window as needed")
         print("  - Global IDs are shown above each person's head")
+        print(f"  - Person features will be saved to: {json_output_path}")
         
         while True:
             ret, frame = cap.read()
@@ -330,7 +376,28 @@ def process_video(
             # Extract features only for persons who have waited 2 seconds
             for person in persons_ready_for_features:
                 logger.info(f"Extracting features for person with track ID {person.track_id}")
-                feature_pipeline.extract_features(frame, person)
+                extracted_features = feature_pipeline.extract_features(frame, person)
+                
+                # Store extracted features for this track_id (will be mapped to global ID later)
+                if extracted_features:
+                    track_features = {
+                        "track_id": person.track_id,
+                        "first_detected_frame": frame_id,
+                        "extraction_timestamp": timestamp.isoformat(),
+                    }
+                    
+                    # Add appearance description if available
+                    if hasattr(extracted_features, 'appearance_description') and extracted_features.appearance_description:
+                        # Convert AppearanceDescription object to dict for JSON serialization
+                        if hasattr(extracted_features.appearance_description, 'dict'):
+                            track_features["appearance_description"] = extracted_features.appearance_description.dict()
+                        elif hasattr(extracted_features.appearance_description, '__dict__'):
+                            track_features["appearance_description"] = extracted_features.appearance_description.__dict__
+                        else:
+                            track_features["appearance_description"] = extracted_features.appearance_description
+                    
+                    # Store by track_id for now (will update with global_id after resolution)
+                    person_features[f"track_{person.track_id}"] = track_features
             
             # Resolve IDs for all tracked persons
             reid_result = id_resolver.resolve_ids(
@@ -340,6 +407,29 @@ def process_video(
                 timestamp,
                 frame
             )
+            
+            # Update person_features with resolved global IDs
+            for track_id, global_id in reid_result.assignments.items():
+                track_key = f"track_{track_id}"
+                person_key = f"person_{global_id}"
+                
+                # If we have features for this track_id, move them to the global_id
+                if track_key in person_features:
+                    if person_key not in person_features:
+                        person_features[person_key] = person_features[track_key].copy()
+                        person_features[person_key]["global_id"] = global_id
+                        person_features[person_key]["track_ids"] = [track_id]
+                    else:
+                        # Merge track IDs if person already exists
+                        if track_id not in person_features[person_key].get("track_ids", []):
+                            person_features[person_key]["track_ids"].append(track_id)
+                    
+                    # Remove the track-based entry
+                    del person_features[track_key]
+            
+            # Save person features to JSON periodically (every 30 frames)
+            if frame_id % 30 == 0 and person_features:
+                save_person_features_json(person_features, str(json_output_path))
             
             # Calculate FPS
             frame_end_time = time.time()
@@ -409,10 +499,16 @@ def process_video(
                     f"New persons: {len(new_persons)} | "
                     f"Total unique: {total_unique_persons} | "
                     f"New IDs: {len(reid_result.new_global_ids)} | "
-                    f"Reused IDs: {len(reid_result.reused_global_ids)}"
+                    f"Reused IDs: {len(reid_result.reused_global_ids)} | "
+                    f"JSON entries: {len(person_features)}"
                 )
     
     finally:
+        # Save final person features to JSON
+        if person_features:
+            save_person_features_json(person_features, str(json_output_path))
+            logger.info(f"Final person features saved to {json_output_path}")
+        
         # Cleanup
         cap.release()
         if writer is not None:

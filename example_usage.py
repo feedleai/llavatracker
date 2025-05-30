@@ -141,6 +141,7 @@ def main():
     print(f"\n🎬 Processing video: {args.video_path}")
     print(f"📁 Output video: {output_video}")
     print(f"🗃️  Database: {config['reid']['database']['db_path']}")
+    print(f"📋 Person appearance JSON: {Path(args.video_path).parent / 'person_features.json'}")
     print(f"\nConfiguration:")
     print(f"  - Similarity threshold: {config['reid']['feature_matching']['min_similarity']}")
     print(f"  - Face recognition: {'✅ Enabled' if config['features']['face']['enabled'] else '❌ Disabled'}")
@@ -157,6 +158,7 @@ def main():
     print("   • Yellow 'Wait X.Xs' labels during the waiting period")
     print("   • Live statistics (FPS, frame count, person count, waiting count)")
     print("   • Press 'q' in the video window to quit early")
+    print("   • Structured appearance attributes saved to JSON for easy analysis")
     print("\n⏳ Please wait for the preview window to appear...")
     
     # Process the video
@@ -171,6 +173,7 @@ def main():
         print(f"Results saved to: {output_dir}")
         print(f"  - Output video: {output_video}")
         print(f"  - Database: {config['reid']['database']['db_path']}")
+        print(f"  - Appearance data: {Path(args.video_path).parent / 'person_features.json'}")
         print(f"  - Logs: {config['logging']['output_dir']}")
         
     except KeyboardInterrupt:
