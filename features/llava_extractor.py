@@ -139,28 +139,53 @@ Instructions for the model:
             print(f"Failed to parse JSON from LLaVA response: {response_text}")
             return self._get_empty_appearance()
         
-        # Map LLaVA response to our AppearanceDescription structure
+        # Helper function to safely get string values (convert lists to appropriate strings)
+        def safe_get_string(data, key, default="unknown"):
+            value = data.get(key, default)
+            if isinstance(value, list):
+                if len(value) == 0:
+                    return "none" if key in ["headwear_type", "upper_clothing_pattern_or_print", "lower_clothing_pattern", "other_distinctive_visual_cues"] else "unknown"
+                else:
+                    return str(value[0])  # Take first item if list is not empty
+            return str(value) if value is not None else default
+        
+        # Helper function to safely get list values (convert strings to lists if needed)
+        def safe_get_list(data, key, default=None):
+            if default is None:
+                default = []
+            value = data.get(key, default)
+            if isinstance(value, str):
+                if value in ["none", "unknown", ""]:
+                    return []
+                else:
+                    return [value]  # Convert single string to list
+            elif isinstance(value, list):
+                return value
+            else:
+                return default
+        
+        # Map LLaVA response to our AppearanceDescription structure with type safety
         parsed = {
-            "gender_guess": response_data.get("gender_guess", "unknown"),
-            "age_range": response_data.get("age_range", "unknown"),
-            "hair_color": response_data.get("hair_color", "unknown"),
-            "hair_style": response_data.get("hair_style", "unknown"),
-            "headwear_type": response_data.get("headwear_type", "unknown"),
-            "headwear_color": response_data.get("headwear_color", "unknown"),
-            "facial_features_accessories": response_data.get("facial_features_accessories", []),
-            "upper_clothing_color_primary": response_data.get("upper_clothing_color_primary", "unknown"),
-            "upper_clothing_color_secondary": response_data.get("upper_clothing_color_secondary", []),
-            "upper_clothing_type": response_data.get("upper_clothing_type", "unknown"),
-            "upper_clothing_pattern_or_print": response_data.get("upper_clothing_pattern_or_print", "none"),
-            "sleeve_length": response_data.get("sleeve_length", "unknown"),
-            "lower_clothing_color": response_data.get("lower_clothing_color", "unknown"),
-            "lower_clothing_type": response_data.get("lower_clothing_type", "unknown"),
-            "lower_clothing_pattern": response_data.get("lower_clothing_pattern", "none"),
-            "footwear_color": response_data.get("footwear_color", "unknown"),
-            "footwear_type": response_data.get("footwear_type", "unknown"),
-            "carried_items_or_prominent_accessories": response_data.get("carried_items_or_prominent_accessories", []),
-            "dominant_colors_overall_outfit": response_data.get("dominant_colors_overall_outfit", []),
-            "other_distinctive_visual_cues": response_data.get("other_distinctive_visual_cues", "none")
+            "gender_guess": safe_get_string(response_data, "gender_guess", "unknown"),
+            "age_range": safe_get_string(response_data, "age_range", "unknown"),
+            "hair_color": safe_get_string(response_data, "hair_color", "unknown"),
+            "hair_style": safe_get_string(response_data, "hair_style", "unknown"),
+            "headwear_type": safe_get_string(response_data, "headwear_type", "none"),
+            "headwear_color": safe_get_string(response_data, "headwear_color", "none"),
+            "facial_features_accessories": safe_get_list(response_data, "facial_features_accessories", []),
+            "upper_clothing_color_primary": safe_get_string(response_data, "upper_clothing_color_primary", "unknown"),
+            "upper_clothing_color_secondary": safe_get_list(response_data, "upper_clothing_color_secondary", []),
+            "upper_clothing_type": safe_get_string(response_data, "upper_clothing_type", "unknown"),
+            "upper_clothing_pattern_or_print": safe_get_string(response_data, "upper_clothing_pattern_or_print", "none"),
+            "sleeve_length": safe_get_string(response_data, "sleeve_length", "unknown"),
+            "lower_clothing_color": safe_get_string(response_data, "lower_clothing_color", "unknown"),
+            "lower_clothing_type": safe_get_string(response_data, "lower_clothing_type", "unknown"),
+            "lower_clothing_pattern": safe_get_string(response_data, "lower_clothing_pattern", "none"),
+            "footwear_color": safe_get_string(response_data, "footwear_color", "unknown"),
+            "footwear_type": safe_get_string(response_data, "footwear_type", "unknown"),
+            "carried_items_or_prominent_accessories": safe_get_list(response_data, "carried_items_or_prominent_accessories", []),
+            "dominant_colors_overall_outfit": safe_get_list(response_data, "dominant_colors_overall_outfit", []),
+            "other_distinctive_visual_cues": safe_get_string(response_data, "other_distinctive_visual_cues", "none")
         }
         
         return parsed

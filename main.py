@@ -544,12 +544,13 @@ def process_video(
                 
                 except Exception as e:
                     logger.error(f"Appearance feature extraction failed for track {person.track_id}: {e}")
-                    # Still assign an ID even if extraction fails
+                    # Still assign an ID even if extraction fails - but only if not already assigned
                     if person.track_id not in track_to_global_mapping:
                         new_global_id = next_global_id
                         next_global_id += 1
                         total_unique_persons += 1
                         track_to_global_mapping[person.track_id] = new_global_id
+                        logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (extraction failed)")
                         
                         # Create basic profile
                         new_profile = PersonProfile(
@@ -559,6 +560,8 @@ def process_video(
                             track_ids=[person.track_id]
                         )
                         feature_db.add_profile(new_profile)
+                    else:
+                        logger.debug(f"Track {person.track_id} already has global_id {track_to_global_mapping[person.track_id]}, skipping profile creation")
             
             # STEP 2: Extract FACE features for persons ready (immediate, once only) and add to existing profiles
             for person in persons_ready_for_face_features:
