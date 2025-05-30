@@ -11,7 +11,7 @@ from ..reid_types import BoundingBox, AppearanceDescription
 from .base import BaseAppearanceExtractor
 
 class LLaVAExtractor(BaseAppearanceExtractor):
-    """LLaVA-based appearance description extractor using local vLLM server."""
+    """LLaVA-based appearance description extractor using local Ollama server."""
     
     def __init__(self):
         self.server_url = None
@@ -19,18 +19,18 @@ class LLaVAExtractor(BaseAppearanceExtractor):
     
     def initialize(self, config: dict) -> None:
         """Initialize LLaVA local server settings."""
-        self.server_url = config.get("server_url", "http://localhost:8000")
-        self.model_name = config.get("model_name", "liuhaotian/llava-v1.5-7b")
+        self.server_url = config.get("server_url", "http://localhost:11434")
+        self.model_name = config.get("model_name", "llava")
         
-        # Test if server is running
+        # Test if Ollama server is running
         try:
-            response = requests.get(f"{self.server_url}/health", timeout=5)
+            response = requests.get(f"{self.server_url}/api/tags", timeout=5)
             if response.status_code != 200:
-                print(f"Warning: vLLM server not responding at {self.server_url}")
-                print("Make sure to start the server with: vllm serve liuhaotian/llava-v1.5-7b")
+                print(f"Warning: Ollama server not responding at {self.server_url}")
+                print("Make sure to start Ollama with: ollama run llava")
         except requests.exceptions.RequestException:
-            print(f"Warning: Cannot connect to vLLM server at {self.server_url}")
-            print("Make sure to start the server with: vllm serve liuhaotian/llava-v1.5-7b")
+            print(f"Warning: Cannot connect to Ollama server at {self.server_url}")
+            print("Make sure to start Ollama with: ollama run llava")
     
     def extract(
         self,
@@ -38,7 +38,7 @@ class LLaVAExtractor(BaseAppearanceExtractor):
         bbox: BoundingBox,
         track_id: int
     ) -> Optional[AppearanceDescription]:
-        """Extract detailed appearance description using local LLaVA model."""
+        """Extract detailed appearance description using local LLaVA model via Ollama."""
         if not self.server_url:
             return None
             
@@ -47,7 +47,7 @@ class LLaVAExtractor(BaseAppearanceExtractor):
         crop = image[y1:y2, x1:x2]
         pil_image = Image.fromarray(crop)
         
-        # Convert to base64 for vLLM
+        # Convert to base64 for Ollama
         img_byte_arr = io.BytesIO()
         pil_image.save(img_byte_arr, format='JPEG')
         img_base64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
@@ -71,43 +71,30 @@ class LLaVAExtractor(BaseAppearanceExtractor):
 
 Be specific about colors (e.g., "dark blue" instead of just "blue"). If you can't see something clearly, use "unknown". Only return the JSON, no other text."""
         
-        # Call local vLLM server
+        # Call local Ollama server
         try:
-            # For vLLM with vision models, we need to use the chat completions endpoint
+            # For Ollama, we use the /api/generate endpoint
             response = requests.post(
-                f"{self.server_url}/v1/chat/completions",
+                f"{self.server_url}/api/generate",
                 headers={"Content-Type": "application/json"},
                 json={
                     "model": self.model_name,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": detailed_prompt
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{img_base64}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    "max_tokens": 500,
-                    "temperature": 0.1,  # Low temperature for consistent JSON output
-                    "top_p": 0.9
+                    "prompt": detailed_prompt,
+                    "images": [img_base64],
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,  # Low temperature for consistent JSON output
+                        "top_p": 0.9
+                    }
                 },
                 timeout=30
             )
             response.raise_for_status()
             data = response.json()
             
-            # Extract the response text
-            if "choices" in data and len(data["choices"]) > 0:
-                response_text = data["choices"][0]["message"]["content"]
+            # Extract the response text from Ollama format
+            if "response" in data:
+                response_text = data["response"]
                 
                 # Parse the JSON response
                 parsed_data = self._parse_llava_response(response_text)

@@ -3,52 +3,55 @@ features:
   face:
     enabled: true
     similarity_threshold: 0.6
-    min_face_size: 32
+    model_name: "buffalo_l"
   llava:
     enabled: true
-    server_url: "http://localhost:8000"  # Local vLLM server
-    model_name: "liuhaotian/llava-v1.5-7b"
-    min_person_height: 100  # pixels
-    appearance_match_threshold: 0.8
+    server_url: "http://localhost:11434"
+    model_name: "llava"
 
 # Re-identification Settings
 reid:
-  time_decay:
-    tau: 300.0  # seconds
-    min_weight: 0.1
   feature_matching:
-    min_similarity: 0.8  # 80% similarity threshold for robust re-identification
+    min_similarity: 0.8  # 80% similarity threshold for robust re-ID
     required_match_percentage: 0.8
   database:
-    db_path: "reid_profiles.db"  # SQLite database path
+    db_path: "reid_profiles.db"
     max_profiles: 1000
-    cleanup_interval: 3600  # seconds
-  track_timeout: 30  # seconds before considering a track truly lost
+    cleanup_interval: 300  # seconds
+  time_decay:
+    tau: 86400  # 24 hours in seconds
+    min_weight: 0.1
 
 # Tracking Settings
 tracker:
   byte_track:
-    model_path: "yolov8n.pt"  # YOLOv8 model for person detection
+    model_path: "yolov8n.pt"
     track_thresh: 0.5
-    track_buffer: 30
-    match_thresh: 0.8
-    min_box_area: 100
-    mot20: false
     iou_threshold: 0.7
-    device: "auto"  # "cpu", "cuda", or "auto"
+    device: "auto"  # auto, cpu, cuda
+    min_box_area: 100
 
 # Logging Settings
 logging:
   level: "INFO"
-  save_appearance_json: true
   output_dir: "logs"
   log_interval: 100  # frames
 
 # Visualization Settings
 visualization:
-  show_track_ids: false  # Only show global IDs
+  show_track_ids: false
   show_global_ids: true
   show_confidence: false
+  text_scale: 0.8
+  colors:
+    - [255, 0, 0]     # Red
+    - [0, 255, 0]     # Green
+    - [0, 0, 255]     # Blue
+    - [255, 255, 0]   # Yellow
+    - [255, 0, 255]   # Magenta
+    - [0, 255, 255]   # Cyan
+    - [255, 128, 0]   # Orange
+    - [128, 0, 255]   # Purple
   box_thickness: 2  # Not used anymore (no bounding boxes)
   text_scale: 0.8  # Larger text for better visibility
   colors:
