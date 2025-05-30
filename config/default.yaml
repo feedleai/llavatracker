@@ -1,0 +1,58 @@
+# Feature Extraction Settings
+features:
+  clip:
+    enabled: true
+    model: "ViT-B/32"
+    similarity_threshold: 0.75
+  face:
+    enabled: true
+    similarity_threshold: 0.6
+    min_face_size: 32
+  llava:
+    enabled: true
+    api_endpoint: "https://api.llava.ai/v1/describe"
+    min_person_height: 100  # pixels
+    appearance_match_threshold: 0.8
+
+# Re-identification Settings
+reid:
+  time_decay:
+    tau: 300.0  # seconds
+    min_weight: 0.1
+  feature_matching:
+    min_similarity: 0.7
+    required_match_percentage: 0.8
+  database:
+    max_profiles: 1000
+    cleanup_interval: 3600  # seconds
+
+# Tracking Settings
+tracker:
+  byte_track:
+    track_thresh: 0.5
+    track_buffer: 30
+    match_thresh: 0.8
+    min_box_area: 100
+    mot20: false
+
+# Logging Settings
+logging:
+  level: "INFO"
+  save_appearance_json: true
+  output_dir: "logs"
+  log_interval: 100  # frames
+
+# Visualization Settings
+visualization:
+  show_track_ids: true
+  show_global_ids: true
+  show_confidence: true
+  box_thickness: 2
+  text_scale: 0.6
+  colors:
+    - [255, 0, 0]    # Red
+    - [0, 255, 0]    # Green
+    - [0, 0, 255]    # Blue
+    - [255, 255, 0]  # Yellow
+    - [255, 0, 255]  # Magenta
+    - [0, 255, 255]  # Cyan 
