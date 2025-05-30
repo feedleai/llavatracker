@@ -101,7 +101,7 @@ Rules:
                     "images": [img_base64],
                     "stream": False,
                     "options": {
-                        "temperature": 0.1,  # Low temperature for consistent JSON output
+                        "temperature": 0,  # Low temperature for consistent JSON output
                         "top_p": 0.9
                     }
                 },
