@@ -111,20 +111,8 @@ def visualize_frame(
             global_id = result.assignments[track_id]
             color = colors[global_id % len(colors)]
             text = f"P{global_id}"
-        elif (person_detection_times and persons_with_features and 
-              track_id in person_detection_times and 
-              track_id not in persons_with_features):
-            # Person is waiting for FACE feature extraction (appearance extracts immediately)
-            if current_timestamp:
-                time_waiting = current_timestamp - person_detection_times[track_id]
-                remaining_time = max(0, 2.0 - time_waiting.total_seconds())
-                color = (0, 255, 255)  # Yellow for waiting
-                text = f"Face {remaining_time:.1f}s"
-            else:
-                color = (0, 255, 255)  # Yellow for waiting
-                text = "Waiting..."
         else:
-            # Fallback for unknown state
+            # Fallback for unknown state (processing)
             color = (128, 128, 128)  # Gray
             text = f"T{track_id}"
         
@@ -164,21 +152,14 @@ def visualize_frame(
     bg_color = (0, 0, 0)  # Black background
     
     # Prepare statistics text
-    waiting_count = 0
-    if person_detection_times and persons_with_features:
-        waiting_count = len([
-            track_id for track_id in person_detection_times.keys()
-            if track_id not in persons_with_features
-        ])
-    
     stats_lines = [
         f"Frame: {frame_id}",
         f"FPS: {fps:.1f}",
         f"Tracked: {len(tracked_persons)}",
-        f"Waiting for Face: {waiting_count}",
         f"Total Persons: {total_persons}",
         f"New This Frame: {new_persons_count}",
-        f"Appearance: Once only (immediate)",
+        f"ID Assignment: Appearance-first",
+        f"Extraction: Immediate (50% body visible)",
         f"Press 'q' to quit"
     ]
     
@@ -245,20 +226,30 @@ def save_person_features_json(person_features: dict, output_path: str):
                         "color": appearance.get("hair_color", "unknown"),
                         "style": appearance.get("hair_style", "unknown")
                     },
-                    "top": {
-                        "type": appearance.get("shirt_type", "unknown"),
-                        "color": appearance.get("shirt_color", "unknown")
+                    "headwear": {
+                        "type": appearance.get("headwear_type", "none"),
+                        "color": appearance.get("headwear_color", "none")
                     },
-                    "bottom": {
-                        "type": appearance.get("pants_type", "unknown"),
-                        "color": appearance.get("pants_color", "unknown")
+                    "facial_accessories": appearance.get("facial_features_accessories", []),
+                    "upper_clothing": {
+                        "type": appearance.get("upper_clothing_type", "unknown"),
+                        "color_primary": appearance.get("upper_clothing_color_primary", "unknown"),
+                        "color_secondary": appearance.get("upper_clothing_color_secondary", []),
+                        "pattern": appearance.get("upper_clothing_pattern_or_print", "none"),
+                        "sleeve_length": appearance.get("sleeve_length", "unknown")
                     },
-                    "shoes": {
-                        "type": appearance.get("shoe_type", "unknown"),
-                        "color": appearance.get("shoe_color", "unknown")
+                    "lower_clothing": {
+                        "type": appearance.get("lower_clothing_type", "unknown"),
+                        "color": appearance.get("lower_clothing_color", "unknown"),
+                        "pattern": appearance.get("lower_clothing_pattern", "none")
                     },
-                    "accessories": appearance.get("accessories", []),
-                    "dominant_outfit_colors": appearance.get("dominant_colors", [])
+                    "footwear": {
+                        "type": appearance.get("footwear_type", "unknown"),
+                        "color": appearance.get("footwear_color", "unknown")
+                    },
+                    "accessories": appearance.get("carried_items_or_prominent_accessories", []),
+                    "dominant_colors": appearance.get("dominant_colors_overall_outfit", []),
+                    "distinctive_features": appearance.get("other_distinctive_visual_cues", "none")
                 }
                 logger.debug(f"Added {person_id} to JSON with appearance: {json_features[person_id]}")
             else:
@@ -275,6 +266,35 @@ def save_person_features_json(person_features: dict, output_path: str):
         logger.error(f"Failed to save person features to JSON: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
+
+def calculate_body_visibility(bbox: tuple, frame_shape: tuple) -> float:
+    """
+    Calculate what percentage of the body is visible in the frame.
+    
+    Args:
+        bbox: Bounding box (x1, y1, x2, y2)
+        frame_shape: Frame dimensions (height, width)
+        
+    Returns:
+        Visibility percentage (0.0 to 1.0)
+    """
+    x1, y1, x2, y2 = bbox
+    frame_height, frame_width = frame_shape[:2]
+    
+    # Calculate the area within frame bounds
+    visible_x1 = max(0, x1)
+    visible_y1 = max(0, y1)
+    visible_x2 = min(frame_width, x2)
+    visible_y2 = min(frame_height, y2)
+    
+    # Calculate areas
+    total_bbox_area = (x2 - x1) * (y2 - y1)
+    visible_area = max(0, (visible_x2 - visible_x1) * (visible_y2 - visible_y1))
+    
+    if total_bbox_area <= 0:
+        return 0.0
+    
+    return visible_area / total_bbox_area
 
 def process_video(
     video_path: str,
@@ -340,12 +360,9 @@ def process_video(
     seen_track_ids = set()
     total_unique_persons = 0
     
-    # Track when persons were first detected (for 2-second delay for FACE only)
+    # Track when persons were first detected (no delays anymore)
     person_detection_times = {}  # track_id -> first_detection_timestamp
     persons_with_face_features = set()  # track_ids that have had FACE features extracted
-    face_extraction_delay = timedelta(seconds=2)  # 2-second delay for face only
-    
-    # Track appearance extraction (immediate, once only)
     persons_with_appearance_features = set()  # track_ids that have had APPEARANCE features extracted
     
     # New: Track ID to Global ID mapping (this is the key change)
@@ -379,7 +396,7 @@ def process_video(
             # Track persons using YOLO + ByteTrack
             tracking_result = tracker.update(frame, frame_id)
             
-            # Identify new persons and track detection times
+            # Identify new persons and persons ready for feature extraction
             new_persons = []
             persons_ready_for_face_features = []
             persons_ready_for_appearance = []
@@ -392,95 +409,26 @@ def process_video(
                     seen_track_ids.add(person.track_id)
                     logger.info(f"New track ID {person.track_id} detected")
                 
-                # Check if this person is ready for FACE feature extraction (2 seconds have passed)
-                if (person.track_id not in persons_with_face_features and 
-                    person.track_id in person_detection_times):
-                    time_since_detection = timestamp - person_detection_times[person.track_id]
-                    if time_since_detection >= face_extraction_delay:
-                        persons_ready_for_face_features.append(person)
-                        persons_with_face_features.add(person.track_id)
-                        logger.info(f"Track ID {person.track_id} ready for face feature extraction")
+                # Check if this person is ready for FACE feature extraction (immediate, once only)
+                if person.track_id not in persons_with_face_features:
+                    persons_ready_for_face_features.append(person)
+                    persons_with_face_features.add(person.track_id)
+                    logger.info(f"Track ID {person.track_id} ready for immediate face extraction")
                 
-                # Check if this person is ready for APPEARANCE extraction (immediate, once only)
+                # Check if this person is ready for APPEARANCE extraction (immediate, once only, with body visibility check)
                 if person.track_id not in persons_with_appearance_features:
-                    persons_ready_for_appearance.append(person)
-                    persons_with_appearance_features.add(person.track_id)
-                    logger.info(f"Track ID {person.track_id} ready for appearance extraction (immediate)")
-            
-            # Extract FACE features for persons ready (with 2-second delay, once only)
-            for person in persons_ready_for_face_features:
-                logger.info(f"Extracting face features for track ID {person.track_id}")
-                
-                try:
-                    # Extract only face features
-                    updated_person = feature_pipeline.extract_features(frame, person)
-                    
-                    face_embedding = None
-                    if updated_person and hasattr(updated_person, 'face_embedding') and updated_person.face_embedding is not None:
-                        face_embedding = updated_person.face_embedding
-                        logger.info(f"Face embedding extracted for track {person.track_id}")
-                    
-                    # Handle face features for new or existing persons
-                    if person.track_id in track_to_global_mapping:
-                        # Update existing person with face data
-                        existing_global_id = track_to_global_mapping[person.track_id]
-                        existing_profile = feature_db.get_profile(existing_global_id)
-                        
-                        if existing_profile and face_embedding is not None:
-                            logger.info(f"Adding face embedding to existing person {existing_global_id} (track {person.track_id})")
-                            existing_profile.add_features(timestamp, face_embedding, None)
-                            feature_db.update_profile(existing_profile)
+                    # Check body visibility (at least 50% visible)
+                    body_visibility = calculate_body_visibility(person.bbox, frame.shape)
+                    if body_visibility >= 0.5:
+                        persons_ready_for_appearance.append(person)
+                        persons_with_appearance_features.add(person.track_id)
+                        logger.info(f"Track ID {person.track_id} ready for appearance extraction ({body_visibility:.1%} visible)")
                     else:
-                        # This is a new person, perform face matching
-                        matched_global_id = None
-                        best_similarity = 0.0
-                        
-                        if face_embedding is not None:
-                            existing_profiles = feature_db.get_all_profiles()
-                            for profile in existing_profiles:
-                                if profile.face_embeddings:
-                                    for timestamp_emb, stored_embedding in profile.face_embeddings:
-                                        face_similarity = np.dot(face_embedding, stored_embedding) / (
-                                            np.linalg.norm(face_embedding) * np.linalg.norm(stored_embedding)
-                                        )
-                                        if face_similarity > 0.8 and face_similarity > best_similarity:
-                                            best_similarity = face_similarity
-                                            matched_global_id = profile.global_id
-                                            logger.info(f"Face match found for track {person.track_id}: {face_similarity:.3f} with person {profile.global_id}")
-                        
-                        if matched_global_id is not None:
-                            # Found face match - assign to existing person
-                            track_to_global_mapping[person.track_id] = matched_global_id
-                            logger.info(f"Track {person.track_id} matched to existing person {matched_global_id} via face recognition")
-                            
-                            existing_profile = feature_db.get_profile(matched_global_id)
-                            if existing_profile:
-                                existing_profile.add_features(timestamp, face_embedding, None)
-                                existing_profile.track_ids.append(person.track_id)
-                                feature_db.update_profile(existing_profile)
-                        else:
-                            # No face match - create new person
-                            new_global_id = next_global_id
-                            next_global_id += 1
-                            total_unique_persons += 1
-                            track_to_global_mapping[person.track_id] = new_global_id
-                            logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (new face)")
-                            
-                            new_profile = PersonProfile(
-                                global_id=new_global_id,
-                                first_seen=timestamp,
-                                last_seen=timestamp,
-                                track_ids=[person.track_id]
-                            )
-                            new_profile.add_features(timestamp, face_embedding, None)
-                            feature_db.add_profile(new_profile)
-                
-                except Exception as e:
-                    logger.error(f"Face feature extraction failed for track {person.track_id}: {e}")
+                        logger.debug(f"Track ID {person.track_id} body visibility too low ({body_visibility:.1%}) - skipping appearance extraction")
             
-            # Extract APPEARANCE features for new persons only (immediate, once only)
+            # STEP 1: Extract APPEARANCE features FIRST for persons ready (appearance-first ID assignment)
             for person in persons_ready_for_appearance:
-                logger.info(f"Extracting appearance features for track ID {person.track_id} (once only)")
+                logger.info(f"Extracting appearance features for track ID {person.track_id} (appearance-first)")
                 
                 try:
                     # Extract only appearance features
@@ -491,68 +439,27 @@ def process_video(
                         appearance_description = updated_person.appearance
                         logger.info(f"Appearance description extracted for track {person.track_id}")
                     
-                    # Handle appearance for new or existing persons
-                    if person.track_id in track_to_global_mapping:
-                        # Update existing person with appearance data
-                        existing_global_id = track_to_global_mapping[person.track_id]
-                        existing_profile = feature_db.get_profile(existing_global_id)
-                        
-                        if existing_profile and appearance_description is not None:
-                            logger.info(f"Adding appearance to existing person {existing_global_id} (track {person.track_id})")
-                            existing_profile.add_features(timestamp, None, appearance_description)
-                            existing_profile.last_seen = timestamp
-                            feature_db.update_profile(existing_profile)
-                            
-                            # Update JSON features for export
-                            track_features = {
-                                "track_id": person.track_id,
-                                "extraction_timestamp": timestamp.isoformat(),
-                                "frame_id": frame_id,
-                                "appearance_description": None
-                            }
-                            
-                            if hasattr(appearance_description, 'dict'):
-                                track_features["appearance_description"] = appearance_description.dict()
-                            elif hasattr(appearance_description, '__dict__'):
-                                track_features["appearance_description"] = appearance_description.__dict__
-                            else:
-                                track_features["appearance_description"] = {
-                                    "gender_guess": getattr(appearance_description, 'gender_guess', 'unknown'),
-                                    "age_range": getattr(appearance_description, 'age_range', 'unknown'),
-                                    "hair_color": getattr(appearance_description, 'hair_color', 'unknown'),
-                                    "hair_style": getattr(appearance_description, 'hair_style', 'unknown'),
-                                    "shirt_color": getattr(appearance_description, 'shirt_color', 'unknown'),
-                                    "shirt_type": getattr(appearance_description, 'shirt_type', 'unknown'),
-                                    "pants_color": getattr(appearance_description, 'pants_color', 'unknown'),
-                                    "pants_type": getattr(appearance_description, 'pants_type', 'unknown'),
-                                    "shoe_color": getattr(appearance_description, 'shoe_color', 'unknown'),
-                                    "shoe_type": getattr(appearance_description, 'shoe_type', 'unknown'),
-                                    "accessories": getattr(appearance_description, 'accessories', []),
-                                    "dominant_colors": getattr(appearance_description, 'dominant_colors', [])
-                                }
-                            
-                            person_features[f"person_{existing_global_id}"] = track_features
-                    else:
-                        # This is a completely new person (no face match yet), try appearance matching
+                    # APPEARANCE-FIRST MATCHING: Check database for appearance matches
+                    if appearance_description is not None:
                         matched_global_id = None
                         best_similarity = 0.0
                         
-                        if appearance_description is not None:
-                            existing_profiles = feature_db.get_all_profiles()
-                            for profile in existing_profiles:
-                                if profile.appearances:
-                                    for timestamp_app, stored_appearance in profile.appearances:
-                                        appearance_similarity = feature_db._enhanced_appearance_similarity(appearance_description, stored_appearance)
-                                        if appearance_similarity > 0.8 and appearance_similarity > best_similarity:
-                                            best_similarity = appearance_similarity
-                                            matched_global_id = profile.global_id
-                                            logger.info(f"Appearance match found for track {person.track_id}: {appearance_similarity:.3f} with person {profile.global_id}")
+                        existing_profiles = feature_db.get_all_profiles()
+                        for profile in existing_profiles:
+                            if profile.appearances:
+                                for timestamp_app, stored_appearance in profile.appearances:
+                                    appearance_similarity = feature_db._enhanced_appearance_similarity(appearance_description, stored_appearance)
+                                    if appearance_similarity > 0.8 and appearance_similarity > best_similarity:
+                                        best_similarity = appearance_similarity
+                                        matched_global_id = profile.global_id
+                                        logger.info(f"Appearance match found for track {person.track_id}: {appearance_similarity:.3f} with person {profile.global_id}")
                         
                         if matched_global_id is not None:
                             # Found appearance match - assign to existing person
                             track_to_global_mapping[person.track_id] = matched_global_id
-                            logger.info(f"Track {person.track_id} matched to existing person {matched_global_id} via appearance")
+                            logger.info(f"Track {person.track_id} assigned to existing person {matched_global_id} via appearance match")
                             
+                            # Update existing profile
                             existing_profile = feature_db.get_profile(matched_global_id)
                             if existing_profile:
                                 existing_profile.add_features(timestamp, None, appearance_description)
@@ -560,13 +467,14 @@ def process_video(
                                 existing_profile.last_seen = timestamp
                                 feature_db.update_profile(existing_profile)
                         else:
-                            # No match - create new person
+                            # No appearance match - create new person with new ID
                             new_global_id = next_global_id
                             next_global_id += 1
                             total_unique_persons += 1
                             track_to_global_mapping[person.track_id] = new_global_id
                             logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (new appearance)")
                             
+                            # Create new profile
                             new_profile = PersonProfile(
                                 global_id=new_global_id,
                                 first_seen=timestamp,
@@ -575,8 +483,26 @@ def process_video(
                             )
                             new_profile.add_features(timestamp, None, appearance_description)
                             feature_db.add_profile(new_profile)
+                    else:
+                        # No appearance extracted - create new person anyway
+                        new_global_id = next_global_id
+                        next_global_id += 1
+                        total_unique_persons += 1
+                        track_to_global_mapping[person.track_id] = new_global_id
+                        logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (no appearance)")
                         
-                        # Store features for JSON export
+                        # Create basic profile
+                        new_profile = PersonProfile(
+                            global_id=new_global_id,
+                            first_seen=timestamp,
+                            last_seen=timestamp,
+                            track_ids=[person.track_id]
+                        )
+                        feature_db.add_profile(new_profile)
+                    
+                    # Store features for JSON export
+                    if person.track_id in track_to_global_mapping:
+                        global_id = track_to_global_mapping[person.track_id]
                         track_features = {
                             "track_id": person.track_id,
                             "extraction_timestamp": timestamp.isoformat(),
@@ -584,32 +510,85 @@ def process_video(
                             "appearance_description": None
                         }
                         
-                        if appearance_description and hasattr(appearance_description, 'dict'):
-                            track_features["appearance_description"] = appearance_description.dict()
-                        elif appearance_description and hasattr(appearance_description, '__dict__'):
-                            track_features["appearance_description"] = appearance_description.__dict__
-                        else:
-                            track_features["appearance_description"] = {
-                                "gender_guess": getattr(appearance_description, 'gender_guess', 'unknown') if appearance_description else 'unknown',
-                                "age_range": getattr(appearance_description, 'age_range', 'unknown') if appearance_description else 'unknown',
-                                "hair_color": getattr(appearance_description, 'hair_color', 'unknown') if appearance_description else 'unknown',
-                                "hair_style": getattr(appearance_description, 'hair_style', 'unknown') if appearance_description else 'unknown',
-                                "shirt_color": getattr(appearance_description, 'shirt_color', 'unknown') if appearance_description else 'unknown',
-                                "shirt_type": getattr(appearance_description, 'shirt_type', 'unknown') if appearance_description else 'unknown',
-                                "pants_color": getattr(appearance_description, 'pants_color', 'unknown') if appearance_description else 'unknown',
-                                "pants_type": getattr(appearance_description, 'pants_type', 'unknown') if appearance_description else 'unknown',
-                                "shoe_color": getattr(appearance_description, 'shoe_color', 'unknown') if appearance_description else 'unknown',
-                                "shoe_type": getattr(appearance_description, 'shoe_type', 'unknown') if appearance_description else 'unknown',
-                                "accessories": getattr(appearance_description, 'accessories', []) if appearance_description else [],
-                                "dominant_colors": getattr(appearance_description, 'dominant_colors', []) if appearance_description else []
-                            }
+                        if appearance_description:
+                            if hasattr(appearance_description, 'dict'):
+                                track_features["appearance_description"] = appearance_description.dict()
+                            elif hasattr(appearance_description, '__dict__'):
+                                track_features["appearance_description"] = appearance_description.__dict__
+                            else:
+                                # Map new detailed fields for JSON export
+                                track_features["appearance_description"] = {
+                                    "gender_guess": getattr(appearance_description, 'gender_guess', 'unknown'),
+                                    "age_range": getattr(appearance_description, 'age_range', 'unknown'),
+                                    "hair_color": getattr(appearance_description, 'hair_color', 'unknown'),
+                                    "hair_style": getattr(appearance_description, 'hair_style', 'unknown'),
+                                    "headwear_type": getattr(appearance_description, 'headwear_type', 'unknown'),
+                                    "headwear_color": getattr(appearance_description, 'headwear_color', 'unknown'),
+                                    "facial_features_accessories": getattr(appearance_description, 'facial_features_accessories', []),
+                                    "upper_clothing_color_primary": getattr(appearance_description, 'upper_clothing_color_primary', 'unknown'),
+                                    "upper_clothing_color_secondary": getattr(appearance_description, 'upper_clothing_color_secondary', []),
+                                    "upper_clothing_type": getattr(appearance_description, 'upper_clothing_type', 'unknown'),
+                                    "upper_clothing_pattern_or_print": getattr(appearance_description, 'upper_clothing_pattern_or_print', 'none'),
+                                    "sleeve_length": getattr(appearance_description, 'sleeve_length', 'unknown'),
+                                    "lower_clothing_color": getattr(appearance_description, 'lower_clothing_color', 'unknown'),
+                                    "lower_clothing_type": getattr(appearance_description, 'lower_clothing_type', 'unknown'),
+                                    "lower_clothing_pattern": getattr(appearance_description, 'lower_clothing_pattern', 'none'),
+                                    "footwear_color": getattr(appearance_description, 'footwear_color', 'unknown'),
+                                    "footwear_type": getattr(appearance_description, 'footwear_type', 'unknown'),
+                                    "carried_items_or_prominent_accessories": getattr(appearance_description, 'carried_items_or_prominent_accessories', []),
+                                    "dominant_colors_overall_outfit": getattr(appearance_description, 'dominant_colors_overall_outfit', []),
+                                    "other_distinctive_visual_cues": getattr(appearance_description, 'other_distinctive_visual_cues', 'none')
+                                }
                         
-                        if person.track_id in track_to_global_mapping:
-                            global_id = track_to_global_mapping[person.track_id]
-                            person_features[f"person_{global_id}"] = track_features
+                        person_features[f"person_{global_id}"] = track_features
                 
                 except Exception as e:
                     logger.error(f"Appearance feature extraction failed for track {person.track_id}: {e}")
+                    # Still assign an ID even if extraction fails
+                    if person.track_id not in track_to_global_mapping:
+                        new_global_id = next_global_id
+                        next_global_id += 1
+                        total_unique_persons += 1
+                        track_to_global_mapping[person.track_id] = new_global_id
+                        
+                        # Create basic profile
+                        new_profile = PersonProfile(
+                            global_id=new_global_id,
+                            first_seen=timestamp,
+                            last_seen=timestamp,
+                            track_ids=[person.track_id]
+                        )
+                        feature_db.add_profile(new_profile)
+            
+            # STEP 2: Extract FACE features for persons ready (immediate, once only) and add to existing profiles
+            for person in persons_ready_for_face_features:
+                # Only extract face features if this person already has a global ID (from appearance step)
+                if person.track_id in track_to_global_mapping:
+                    logger.info(f"Extracting face features for track ID {person.track_id} (adding to existing profile)")
+                    
+                    try:
+                        # Extract only face features
+                        updated_person = feature_pipeline.extract_features(frame, person)
+                        
+                        face_embedding = None
+                        if updated_person and hasattr(updated_person, 'face_embedding') and updated_person.face_embedding is not None:
+                            face_embedding = updated_person.face_embedding
+                            logger.info(f"Face embedding extracted for track {person.track_id}")
+                        
+                        # Add face features to existing person profile
+                        if face_embedding is not None:
+                            existing_global_id = track_to_global_mapping[person.track_id]
+                            existing_profile = feature_db.get_profile(existing_global_id)
+                            
+                            if existing_profile:
+                                logger.info(f"Adding face embedding to existing person {existing_global_id} (track {person.track_id})")
+                                existing_profile.add_features(timestamp, face_embedding, None)
+                                feature_db.update_profile(existing_profile)
+                    
+                    except Exception as e:
+                        logger.error(f"Face feature extraction failed for track {person.track_id}: {e}")
+                else:
+                    logger.debug(f"Skipping face extraction for track {person.track_id} - no global ID assigned yet")
             
             # Create reid result using our track_to_global_mapping (no more complex ID resolution)
             reid_result_assignments = {}
@@ -704,17 +683,12 @@ def process_video(
             
             # Log progress
             if frame_id % config["logging"]["log_interval"] == 0:
-                waiting_count = len([
-                    track_id for track_id in person_detection_times.keys()
-                    if track_id not in persons_with_face_features
-                ])
                 logger.info(
                     f"Processed frame {frame_id} | "
                     f"FPS: {avg_fps:.1f} | "
                     f"Tracked: {len(tracking_result.tracked_persons)} | "
-                    f"Waiting for face: {waiting_count} | "
-                    f"Face features extracted: {len(persons_ready_for_face_features)} | "
                     f"Appearance extracted: {len(persons_ready_for_appearance)} | "
+                    f"Face extracted: {len(persons_ready_for_face_features)} | "
                     f"New persons: {len(new_persons)} | "
                     f"Total unique: {total_unique_persons} | "
                     f"New IDs: {len(reid_result.new_global_ids)} | "

@@ -27,23 +27,43 @@ class AppearanceDescription(BaseModel):
     hair_color: Optional[str] = None
     hair_style: Optional[str] = None
     
+    # Headwear details
+    headwear_type: Optional[str] = None
+    headwear_color: Optional[str] = None
+    
+    # Facial accessories
+    facial_features_accessories: Optional[List[str]] = None
+    
     # Upper clothing details
-    shirt_color: Optional[str] = None
-    shirt_type: Optional[str] = None
+    upper_clothing_color_primary: Optional[str] = None
+    upper_clothing_color_secondary: Optional[List[str]] = None
+    upper_clothing_type: Optional[str] = None
+    upper_clothing_pattern_or_print: Optional[str] = None
+    sleeve_length: Optional[str] = None
     
     # Lower clothing details
-    pants_color: Optional[str] = None
-    pants_type: Optional[str] = None
+    lower_clothing_color: Optional[str] = None
+    lower_clothing_type: Optional[str] = None
+    lower_clothing_pattern: Optional[str] = None
     
     # Footwear details
+    footwear_color: Optional[str] = None
+    footwear_type: Optional[str] = None
+    
+    # Accessories and distinctive features
+    carried_items_or_prominent_accessories: Optional[List[str]] = None
+    dominant_colors_overall_outfit: Optional[List[str]] = None
+    other_distinctive_visual_cues: Optional[str] = None
+    
+    # Legacy fields for backward compatibility (kept for older database entries)
+    shirt_color: Optional[str] = None
+    shirt_type: Optional[str] = None
+    pants_color: Optional[str] = None
+    pants_type: Optional[str] = None
     shoe_color: Optional[str] = None
     shoe_type: Optional[str] = None
-    
-    # Additional features
     accessories: Optional[List[str]] = None
     dominant_colors: Optional[List[str]] = None
-    
-    # Legacy fields for backward compatibility
     hair: Optional[str] = None
     upper_clothing: Optional[str] = None
     lower_clothing: Optional[str] = None

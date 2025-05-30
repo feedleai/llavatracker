@@ -53,41 +53,35 @@ class LLaVAExtractor(BaseAppearanceExtractor):
         img_base64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
         
         # New structured prompt for consistent output
-        reid_prompt = """You are a visual-attribute extractor for person re-identification.  
-Inspect the image and output **only** the following JSON (no extra text):
-
+        reid_prompt = """Analyze the provided image of a person with a focus on attributes crucial for re-identification. Provide detailed information in the following JSON format:
 {
-  "gender": "male | female | unknown",
-  "age": "child | teen | young_adult | middle_aged | elderly",
-  "hair": {
-      "color": "black | brown | blonde | red | gray | white | bald | unknown",
-      "style": "short | medium | long | curly | straight | shaved | bald | unknown"
-  },
-  "top": {
-      "type": "t-shirt | shirt | polo | sweater | jacket | hoodie | coat | dress | unknown",
-      "color": "black | white | gray | red | orange | yellow | green | blue | purple | pink | brown | beige"
-  },
-  "bottom": {
-      "type": "jeans | trousers | shorts | skirt | dress | leggings | unknown",
-      "color": "same palette as above"
-  },
-  "shoes": {
-      "type": "sneakers | dress_shoes | boots | sandals | heels | loafers | unknown",
-      "color": "same palette as above"
-  },
-  "accessories": [
-      "glasses","sunglasses","hat","cap","beanie",
-      "bag","backpack","handbag","watch","bracelet","necklace",
-      "scarf","earphones","mask"
-  ],                      
-  "dominant_outfit_colors": ["color1","color2","color3"]   
+    "gender_guess": "male/female/unknown",
+    "age_range": "child/teenager/young_adult/middle_aged/elderly",
+    "hair_color": "specific color (e.g., black, brown, blonde, gray, red, salt-and-pepper). If covered or not visible, use 'unknown' or 'covered'.",
+    "hair_style": "short/long/curly/straight/wavy/bald/ponytail/bun/braids/afro/covered_by_headwear/etc. Be specific if possible (e.g., 'short and spiky', 'long and straight').",
+    "headwear_type": "none/cap/beanie/hat (specify type e.g., fedora, sunhat)/hood_up/headband/scarf_on_head/helmet/etc.",
+    "headwear_color": "specific color of headwear (e.g., 'bright red', 'dark gray'). If multiple colors, list prominent ones. Use 'none' if no headwear.",
+    "facial_features_accessories": ["list any visible facial accessories like 'glasses (specify frame color/style if possible, e.g., 'black thick-rimmed glasses')', 'sunglasses (specify lens/frame color)', 'face_mask (specify color)', 'earrings (specify color/type if clear)', 'piercings (location if clear)'. Use empty list [] if none."],
+    "upper_clothing_color_primary": "specific primary color of the main upper body garment (e.g., 'navy blue', 'lime green', 'maroon').",
+    "upper_clothing_color_secondary": ["list other distinct colors if present on the main upper garment (e.g., 'white stripes', 'yellow logo'). Use empty list [] if none."],
+    "upper_clothing_type": "t-shirt/polo_shirt/button-down_shirt/blouse/sweater/sweatshirt/hoodie/jacket (specify type if possible e.g., 'denim jacket', 'leather jacket', 'windbreaker')/vest/tank_top/dress/etc.",
+    "upper_clothing_pattern_or_print": "describe any pattern (e.g., 'horizontal_stripes', 'vertical_stripes', 'plaid', 'checked', 'floral', 'polka_dots', 'camouflage', 'abstract') or significant graphic/logo/text (e.g., 'Nike swoosh on left chest', 'band name text', 'large eagle graphic'). Use 'none' if plain.",
+    "sleeve_length": "short_sleeve/long_sleeve/three_quarter_sleeve/sleeveless/rolled_up_sleeves/unknown.",
+    "lower_clothing_color": "specific primary color of lower body clothing (e.g., 'dark wash blue' for jeans, 'khaki', 'black'). If 'dress' is upper_clothing_type, specify if lower part is distinct or 'same_as_upper'.",
+    "lower_clothing_type": "jeans/dress_pants/casual_pants (e.g. chinos, khakis)/shorts/skirt (specify length e.g. mini, knee-length, maxi)/leggings/sweatpants/track_pants/cargo_pants/etc. If 'dress' is upper_clothing_type, use 'dress'.",
+    "lower_clothing_pattern": "describe any pattern (e.g., 'pinstripes', 'camouflage', 'acid_wash'). Use 'none' if plain.",
+    "footwear_color": "specific color(s) of footwear (e.g., 'white_with_red_accents', 'all_black', 'brown').",
+    "footwear_type": "sneakers/trainers/athletic_shoes/dress_shoes (e.g. oxfords, loafers)/boots (specify type if possible e.g. ankle, combat, knee-high)/sandals/flip-flops/heels/flats/etc.",
+    "carried_items_or_prominent_accessories": ["list and describe items being carried or very prominent non-clothing accessories (e.g., 'black_backpack', 'brown_leather_shoulder_bag', 'holding_red_umbrella', 'white_shopping_bag_with_logo', 'silver_watch_on_left_wrist', 'multiple_bracelets'). Use empty list [] if none."],
+    "dominant_colors_overall_outfit": ["list the top 3-5 most prominent colors visible in the entire outfit, considering surface area and visual impact (e.g., 'navy_blue', 'white', 'khaki', 'red')."],
+    "other_distinctive_visual_cues": "any other highly distinctive visual feature useful for re-identification not captured above (e.g., 'large_colorful_tattoo_on_right_forearm', 'person_is_using_crutches', 'bright_pink_hair_streak', 'wearing_a_name_badge'). Use 'none' if nothing else stands out."
 }
 
-Rules:
-- Use ONLY the listed values (lowercase, exact spelling).
-- If uncertain, choose "unknown".
-- Do **not** add or remove keys.
-- Return valid JSON only."""
+Instructions for the model:
+- Prioritize accuracy and detail for visual attributes.
+- Be very specific about colors (e.g., "light blue" or "dark red" instead of just "blue" or "red"). Include metallic colors like "silver" or "gold" if applicable.
+- If an attribute is occluded, ambiguous, or truly not determinable from the image, use "unknown". For list fields where nothing applies, use an empty list []. For string fields where "none" is an appropriate description (like patterns or headwear), use "none".
+- Only return the populated JSON object. No other text before or after the JSON."""
         
         # Call local Ollama server
         try:
@@ -147,34 +141,26 @@ Rules:
         
         # Map LLaVA response to our AppearanceDescription structure
         parsed = {
-            "gender_guess": response_data.get("gender", "unknown"),
-            "age_range": response_data.get("age", "unknown"),
-            
-            # Hair information
-            "hair_color": response_data.get("hair", {}).get("color", "unknown"),
-            "hair_style": response_data.get("hair", {}).get("style", "unknown"),
-            
-            # Upper clothing
-            "shirt_color": response_data.get("top", {}).get("color", "unknown"),
-            "shirt_type": response_data.get("top", {}).get("type", "unknown"),
-            
-            # Lower clothing
-            "pants_color": response_data.get("bottom", {}).get("color", "unknown"),
-            "pants_type": response_data.get("bottom", {}).get("type", "unknown"),
-            
-            # Footwear
-            "shoe_color": response_data.get("shoes", {}).get("color", "unknown"),
-            "shoe_type": response_data.get("shoes", {}).get("type", "unknown"),
-            
-            # Additional features
-            "accessories": response_data.get("accessories", []),
-            "dominant_colors": response_data.get("dominant_outfit_colors", []),
-            
-            # Legacy fields for compatibility - create meaningful descriptions
-            "hair": f"{response_data.get('hair', {}).get('color', 'unknown')} {response_data.get('hair', {}).get('style', '')}".strip(),
-            "upper_clothing": f"{response_data.get('top', {}).get('color', 'unknown')} {response_data.get('top', {}).get('type', '')}".strip(),
-            "lower_clothing": f"{response_data.get('bottom', {}).get('color', 'unknown')} {response_data.get('bottom', {}).get('type', '')}".strip(),
-            "footwear": f"{response_data.get('shoes', {}).get('color', 'unknown')} {response_data.get('shoes', {}).get('type', '')}".strip()
+            "gender_guess": response_data.get("gender_guess", "unknown"),
+            "age_range": response_data.get("age_range", "unknown"),
+            "hair_color": response_data.get("hair_color", "unknown"),
+            "hair_style": response_data.get("hair_style", "unknown"),
+            "headwear_type": response_data.get("headwear_type", "unknown"),
+            "headwear_color": response_data.get("headwear_color", "unknown"),
+            "facial_features_accessories": response_data.get("facial_features_accessories", []),
+            "upper_clothing_color_primary": response_data.get("upper_clothing_color_primary", "unknown"),
+            "upper_clothing_color_secondary": response_data.get("upper_clothing_color_secondary", []),
+            "upper_clothing_type": response_data.get("upper_clothing_type", "unknown"),
+            "upper_clothing_pattern_or_print": response_data.get("upper_clothing_pattern_or_print", "none"),
+            "sleeve_length": response_data.get("sleeve_length", "unknown"),
+            "lower_clothing_color": response_data.get("lower_clothing_color", "unknown"),
+            "lower_clothing_type": response_data.get("lower_clothing_type", "unknown"),
+            "lower_clothing_pattern": response_data.get("lower_clothing_pattern", "none"),
+            "footwear_color": response_data.get("footwear_color", "unknown"),
+            "footwear_type": response_data.get("footwear_type", "unknown"),
+            "carried_items_or_prominent_accessories": response_data.get("carried_items_or_prominent_accessories", []),
+            "dominant_colors_overall_outfit": response_data.get("dominant_colors_overall_outfit", []),
+            "other_distinctive_visual_cues": response_data.get("other_distinctive_visual_cues", "none")
         }
         
         return parsed
@@ -186,18 +172,22 @@ Rules:
             "age_range": "unknown",
             "hair_color": "unknown",
             "hair_style": "unknown",
-            "shirt_color": "unknown",
-            "shirt_type": "unknown",
-            "pants_color": "unknown",
-            "pants_type": "unknown",
-            "shoe_color": "unknown",
-            "shoe_type": "unknown",
-            "accessories": [],
-            "dominant_colors": [],
-            "hair": "unknown",
-            "upper_clothing": "unknown",
-            "lower_clothing": "unknown",
-            "footwear": "unknown"
+            "headwear_type": "unknown",
+            "headwear_color": "unknown",
+            "facial_features_accessories": [],
+            "upper_clothing_color_primary": "unknown",
+            "upper_clothing_color_secondary": [],
+            "upper_clothing_type": "unknown",
+            "upper_clothing_pattern_or_print": "none",
+            "sleeve_length": "unknown",
+            "lower_clothing_color": "unknown",
+            "lower_clothing_type": "unknown",
+            "lower_clothing_pattern": "none",
+            "footwear_color": "unknown",
+            "footwear_type": "unknown",
+            "carried_items_or_prominent_accessories": [],
+            "dominant_colors_overall_outfit": [],
+            "other_distinctive_visual_cues": "none"
         }
     
     def cleanup(self) -> None:
