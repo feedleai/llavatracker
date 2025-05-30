@@ -520,172 +520,77 @@ class SQLiteFeatureDatabase(BaseFeatureDatabase):
         return min(1.0, final_similarity)
     
     def _enhanced_appearance_similarity(self, a: AppearanceDescription, b: AppearanceDescription) -> float:
-        """Enhanced appearance similarity with robust color and semantic matching."""
+        """Count-based appearance similarity: count direct property matches."""
         
-        # Comprehensive color mapping for robust matching
-        color_families = {
-            'black': ['black', 'dark', 'charcoal', 'ebony', 'jet', 'coal'],
-            'white': ['white', 'light', 'cream', 'ivory', 'off-white', 'pearl', 'snow'],
-            'gray': ['gray', 'grey', 'silver', 'ash', 'slate', 'charcoal', 'gunmetal'],
-            'blue': ['blue', 'navy', 'royal', 'cobalt', 'azure', 'cerulean', 'sapphire', 'denim'],
-            'red': ['red', 'crimson', 'scarlet', 'burgundy', 'maroon', 'cherry', 'wine', 'rust'],
-            'green': ['green', 'emerald', 'forest', 'olive', 'lime', 'mint', 'sage', 'jade'],
-            'brown': ['brown', 'tan', 'beige', 'khaki', 'camel', 'chocolate', 'coffee', 'mocha'],
-            'yellow': ['yellow', 'gold', 'golden', 'amber', 'blonde', 'cream', 'butter'],
-            'orange': ['orange', 'coral', 'peach', 'rust', 'bronze', 'copper'],
-            'purple': ['purple', 'violet', 'lavender', 'plum', 'magenta', 'mauve'],
-            'pink': ['pink', 'rose', 'salmon', 'blush', 'fuchsia']
-        }
+        # List of properties to check for exact matches
+        string_properties = [
+            'gender_guess', 'age_range', 'hair_color', 'hair_style',
+            'headwear_type', 'headwear_color', 'upper_clothing_color_primary',
+            'upper_clothing_type', 'upper_clothing_pattern_or_print', 'sleeve_length',
+            'lower_clothing_color', 'lower_clothing_type', 'lower_clothing_pattern',
+            'footwear_color', 'footwear_type', 'other_distinctive_visual_cues'
+        ]
         
-        # Clothing type groupings for semantic matching
-        clothing_groups = {
-            'shirts': ['shirt', 't-shirt', 'tee', 'polo', 'blouse', 'top', 'tank', 'vest'],
-            'sweaters': ['sweater', 'sweatshirt', 'hoodie', 'cardigan', 'pullover'],
-            'jackets': ['jacket', 'coat', 'blazer', 'windbreaker', 'parka', 'vest'],
-            'pants': ['pants', 'trousers', 'jeans', 'slacks', 'chinos'],
-            'shorts': ['shorts', 'bermuda'],
-            'skirts': ['skirt', 'mini', 'maxi'],
-            'dresses': ['dress', 'gown', 'frock'],
-            'athletic': ['athletic', 'sports', 'gym', 'workout', 'track'],
-            'sneakers': ['sneakers', 'trainers', 'athletic', 'running', 'tennis'],
-            'dress_shoes': ['dress', 'formal', 'oxford', 'loafer', 'heel'],
-            'boots': ['boots', 'ankle', 'knee', 'combat', 'work'],
-            'casual_shoes': ['casual', 'slip-on', 'canvas', 'flat']
-        }
+        list_properties = [
+            'facial_features_accessories', 'upper_clothing_color_secondary',
+            'carried_items_or_prominent_accessories', 'dominant_colors_overall_outfit'
+        ]
         
-        def robust_color_match(color1: str, color2: str) -> float:
-            if not color1 or not color2 or color1 == "unknown" or color2 == "unknown":
-                return 0.0
-            
-            color1_lower = color1.lower().strip()
-            color2_lower = color2.lower().strip()
-            
-            # Exact match
-            if color1_lower == color2_lower:
-                return 1.0
-            
-            # Check if both colors belong to same family
-            for family, variants in color_families.items():
-                if any(variant in color1_lower for variant in variants) and \
-                   any(variant in color2_lower for variant in variants):
-                    return 0.85
-            
-            # Partial word matches
-            color1_words = set(color1_lower.split())
-            color2_words = set(color2_lower.split())
-            common_words = color1_words.intersection(color2_words)
-            if common_words:
-                return 0.7
-            
-            return 0.0
+        def safe_get_value(obj, prop, default="unknown"):
+            """Safely get property value with default."""
+            value = getattr(obj, prop, default)
+            if value is None or value == "":
+                return default
+            return str(value).lower().strip()
         
-        def semantic_clothing_match(item1: str, item2: str) -> float:
-            if not item1 or not item2 or item1 == "unknown" or item2 == "unknown":
-                return 0.0
-            
-            item1_lower = item1.lower().strip()
-            item2_lower = item2.lower().strip()
-            
-            # Exact match
-            if item1_lower == item2_lower:
-                return 1.0
-            
-            # Check if both items belong to same group
-            for group, items in clothing_groups.items():
-                if any(item in item1_lower for item in items) and \
-                   any(item in item2_lower for item in items):
-                    return 0.8
-            
-            # Partial word matches
-            item1_words = set(item1_lower.split())
-            item2_words = set(item2_lower.split())
-            common_words = item1_words.intersection(item2_words)
-            if common_words:
-                return 0.6
-            
-            return 0.0
+        def safe_get_list(obj, prop, default=None):
+            """Safely get list property value."""
+            if default is None:
+                default = []
+            value = getattr(obj, prop, default)
+            if value is None:
+                return default
+            return value if isinstance(value, list) else default
         
-        def string_match_score(s1: str, s2: str) -> float:
-            if not s1 or not s2 or s1 == "unknown" or s2 == "unknown":
-                return 0.0
-            if s1.lower().strip() == s2.lower().strip():
-                return 1.0
-            return 0.0
-        
-        def list_similarity(list1: list, list2: list) -> float:
+        def lists_have_common_items(list1, list2):
+            """Check if two lists have any common items."""
             if not list1 or not list2:
-                return 0.0 if (list1 or list2) else 1.0  # Both empty = perfect match
-            
+                return False
             set1 = set(str(item).lower().strip() for item in list1)
             set2 = set(str(item).lower().strip() for item in list2)
+            return len(set1.intersection(set2)) > 0
+        
+        # Count exact matches for string properties
+        matches = 0
+        total_checked = 0
+        
+        for prop in string_properties:
+            val_a = safe_get_value(a, prop)
+            val_b = safe_get_value(b, prop)
             
-            intersection = set1.intersection(set2)
-            union = set1.union(set2)
+            # Only count properties that have meaningful values (not "unknown" or "none")
+            if val_a not in ["unknown", "none"] and val_b not in ["unknown", "none"]:
+                total_checked += 1
+                if val_a == val_b:
+                    matches += 1
+        
+        # Count matches for list properties
+        for prop in list_properties:
+            list_a = safe_get_list(a, prop)
+            list_b = safe_get_list(b, prop)
             
-            return len(intersection) / len(union) if union else 0.0
+            # Only count if at least one list has content
+            if list_a or list_b:
+                total_checked += 1
+                if lists_have_common_items(list_a, list_b):
+                    matches += 1
         
-        # Calculate individual similarities with proper weighting
-        scores = []
+        # Calculate similarity as percentage of matches
+        if total_checked == 0:
+            return 0.0
         
-        # High importance attributes (20% each)
-        scores.append(robust_color_match(a.upper_clothing_color_primary, b.upper_clothing_color_primary) * 0.20)
-        scores.append(robust_color_match(a.lower_clothing_color, b.lower_clothing_color) * 0.20)
-        
-        # Medium importance attributes (15% each)
-        scores.append(semantic_clothing_match(a.upper_clothing_type, b.upper_clothing_type) * 0.15)
-        scores.append(semantic_clothing_match(a.lower_clothing_type, b.lower_clothing_type) * 0.15)
-        
-        # Lower importance attributes (10% each)
-        scores.append(robust_color_match(a.footwear_color, b.footwear_color) * 0.10)
-        scores.append(string_match_score(a.gender_guess, b.gender_guess) * 0.05)
-        scores.append(string_match_score(a.age_range, b.age_range) * 0.05)
-        scores.append(robust_color_match(a.hair_color, b.hair_color) * 0.05)
-        scores.append(string_match_score(a.hair_style, b.hair_style) * 0.05)
-        
-        # Base similarity from main attributes
-        base_similarity = sum(scores)
-        
-        # Bonus points for additional matches
-        bonus = 0.0
-        
-        # Footwear type match
-        if semantic_clothing_match(a.footwear_type, b.footwear_type) > 0.7:
-            bonus += 0.03
-        
-        # Headwear matches
-        if string_match_score(a.headwear_type, b.headwear_type) > 0.0:
-            bonus += 0.02
-        if robust_color_match(a.headwear_color, b.headwear_color) > 0.7:
-            bonus += 0.02
-        
-        # Accessories similarity
-        if hasattr(a, 'facial_features_accessories') and hasattr(b, 'facial_features_accessories'):
-            facial_acc_sim = list_similarity(a.facial_features_accessories, b.facial_features_accessories)
-            if facial_acc_sim > 0.5:
-                bonus += 0.03
-        
-        if hasattr(a, 'carried_items_or_prominent_accessories') and hasattr(b, 'carried_items_or_prominent_accessories'):
-            carried_sim = list_similarity(a.carried_items_or_prominent_accessories, b.carried_items_or_prominent_accessories)
-            if carried_sim > 0.5:
-                bonus += 0.03
-        
-        # Color consistency check - multiple color attributes matching
-        color_attrs = ['upper_clothing_color_primary', 'lower_clothing_color', 'footwear_color', 'hair_color']
-        color_matches = 0
-        color_comparisons = 0
-        
-        for attr in color_attrs:
-            val_a = getattr(a, attr, None)
-            val_b = getattr(b, attr, None)
-            if val_a and val_b and val_a != "unknown" and val_b != "unknown":
-                color_comparisons += 1
-                if robust_color_match(val_a, val_b) > 0.7:
-                    color_matches += 1
-        
-        if color_comparisons >= 3 and color_matches >= 2:
-            base_similarity *= 1.08  # Consistency bonus
-        
-        return min(1.0, max(0.0, base_similarity + bonus))
+        similarity = matches / total_checked
+        return similarity
     
     def _compute_time_weight(self, age: timedelta) -> float:
         """Compute time decay weight for a feature."""

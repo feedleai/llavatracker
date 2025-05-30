@@ -457,17 +457,44 @@ def process_video(
                             if profile.appearances:
                                 for timestamp_app, stored_appearance in profile.appearances:
                                     appearance_similarity = feature_db._enhanced_appearance_similarity(appearance_description, stored_appearance)
-                                    logger.debug(f"Track {person.track_id} vs Person {profile.global_id}: similarity = {appearance_similarity:.3f}")
                                     
-                                    # Make matching more strict: require 0.85+ similarity AND must be significantly better than current best
-                                    if appearance_similarity >= 0.85 and appearance_similarity > (best_similarity + 0.05):
+                                    # For count-based similarity, let's also get the actual counts for better logging
+                                    # Count properties for detailed logging
+                                    string_properties = [
+                                        'gender_guess', 'age_range', 'hair_color', 'hair_style',
+                                        'headwear_type', 'headwear_color', 'upper_clothing_color_primary',
+                                        'upper_clothing_type', 'upper_clothing_pattern_or_print', 'sleeve_length',
+                                        'lower_clothing_color', 'lower_clothing_type', 'lower_clothing_pattern',
+                                        'footwear_color', 'footwear_type', 'other_distinctive_visual_cues'
+                                    ]
+                                    
+                                    def safe_get_value(obj, prop, default="unknown"):
+                                        value = getattr(obj, prop, default)
+                                        if value is None or value == "":
+                                            return default
+                                        return str(value).lower().strip()
+                                    
+                                    matches = 0
+                                    total_checked = 0
+                                    for prop in string_properties:
+                                        val_a = safe_get_value(appearance_description, prop)
+                                        val_b = safe_get_value(stored_appearance, prop)
+                                        if val_a not in ["unknown", "none"] and val_b not in ["unknown", "none"]:
+                                            total_checked += 1
+                                            if val_a == val_b:
+                                                matches += 1
+                                    
+                                    logger.debug(f"Track {person.track_id} vs Person {profile.global_id}: {matches}/{total_checked} properties match, similarity = {appearance_similarity:.3f}")
+                                    
+                                    # Make matching more realistic: require at least 50% property match AND minimum 3 properties matching
+                                    if appearance_similarity >= 0.5 and matches >= 3 and appearance_similarity > best_similarity:
                                         best_similarity = appearance_similarity
                                         matched_global_id = profile.global_id
-                                        logger.info(f"Strong appearance match found for track {person.track_id}: {appearance_similarity:.3f} with person {profile.global_id}")
+                                        logger.info(f"Strong appearance match found for track {person.track_id}: {matches}/{total_checked} properties match ({appearance_similarity:.3f}) with person {profile.global_id}")
                         
                         logger.info(f"Final match decision for track {person.track_id}: best_similarity={best_similarity:.3f}, matched_global_id={matched_global_id}")
                         
-                        if matched_global_id is not None and best_similarity >= 0.85:
+                        if matched_global_id is not None and best_similarity >= 0.5:
                             # Found appearance match - assign to existing person
                             track_to_global_mapping[person.track_id] = matched_global_id
                             logger.info(f"✅ Track {person.track_id} assigned to existing person {matched_global_id} via appearance match (similarity: {best_similarity:.3f})")
