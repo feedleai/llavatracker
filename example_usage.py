@@ -3,13 +3,13 @@
 Example usage of the Hybrid Person Re-Identification System with local LLaVA.
 
 This script demonstrates how to:
-1. Set up the system with local vLLM LLaVA server
+1. Set up the system with local Ollama LLaVA server
 2. Process a video for person re-identification
 3. Monitor the re-identification results
 
 Requirements:
 1. Install dependencies: pip install -r requirements.txt
-2. Start vLLM server: vllm serve liuhaotian/llava-v1.5-7b
+2. Start Ollama server: ollama run llava
 3. Run this script: python example_usage.py --video_path test2.mp4
 """
 
@@ -29,25 +29,23 @@ def check_gpu_availability():
     except ImportError:
         return False, 0
 
-def check_vllm_server(server_url="http://localhost:8000"):
-    """Check if vLLM server is running and get model info."""
+def check_ollama_server(server_url="http://localhost:11434"):
+    """Check if Ollama server is running and get model info."""
     import requests
     try:
-        # Check health
-        response = requests.get(f"{server_url}/health", timeout=5)
+        # Check if Ollama server is running by hitting the tags endpoint
+        response = requests.get(f"{server_url}/api/tags", timeout=5)
         if response.status_code != 200:
             return False, None
         
-        # Try to get model info
-        try:
-            model_response = requests.get(f"{server_url}/v1/models", timeout=5)
-            if model_response.status_code == 200:
-                models = model_response.json()
-                return True, models.get("data", [])
-        except:
-            pass
+        # Get available models
+        models_data = response.json()
+        models = models_data.get("models", [])
         
-        return True, None
+        # Check if llava model is available
+        llava_models = [m for m in models if "llava" in m.get("name", "").lower()]
+        
+        return True, llava_models
     except:
         return False, None
 
@@ -101,36 +99,30 @@ def main():
         config["features"]["llava"]["enabled"] = False
         print("LLaVA disabled - using only face recognition")
     
-    # Check vLLM server if LLaVA is enabled
+    # Check Ollama server if LLaVA is enabled
     if config["features"]["llava"]["enabled"]:
         server_url = config["features"]["llava"]["server_url"]
-        server_running, model_info = check_vllm_server(server_url)
+        server_running, model_info = check_ollama_server(server_url)
         
         if not server_running:
-            print(f"❌ vLLM server not running at {server_url}")
-            print("\nTo start the vLLM server, run in another terminal:")
-            if gpu_available:
-                print("# With GPU (recommended):")
-                print("vllm serve liuhaotian/llava-v1.5-7b")
-                print("\n# Or with custom GPU memory:")
-                print("vllm serve liuhaotian/llava-v1.5-7b --gpu-memory-utilization 0.8")
-            else:
-                print("# CPU only (slower):")
-                print("CUDA_VISIBLE_DEVICES='' vllm serve liuhaotian/llava-v1.5-7b")
+            print(f"❌ Ollama server not running at {server_url}")
+            print("\nTo start the Ollama server, run in another terminal:")
+            print("# First, pull the LLaVA model (if not already done):")
+            print("ollama pull llava")
+            print("\n# Then start the model:")
+            print("ollama run llava")
             print("\nOr run with --disable_llava to use only face recognition")
             return
         else:
-            print(f"✅ vLLM server is running at {server_url}")
-            if gpu_available:
-                print("   🚀 Model should be running on GPU for optimal performance")
-            else:
-                print("   ⚠️  Running on CPU - expect slower processing")
+            print(f"✅ Ollama server is running at {server_url}")
             
             if model_info:
-                for model in model_info:
-                    if "llava" in model.get("id", "").lower():
-                        print(f"   📋 Model: {model.get('id', 'Unknown')}")
-                        break
+                if len(model_info) > 0:
+                    print(f"   📋 LLaVA model available: {model_info[0].get('name', 'Unknown')}")
+                else:
+                    print("   ⚠️  No LLaVA model found. Run 'ollama pull llava' to install it.")
+            else:
+                print("   ⚠️  Could not verify model availability")
     
     # Update database path to output directory
     config["reid"]["database"]["db_path"] = str(output_dir / "reid_profiles.db")
