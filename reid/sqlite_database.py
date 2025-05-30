@@ -134,8 +134,24 @@ class SQLiteFeatureDatabase(BaseFeatureDatabase):
         
         self.conn.commit()
     
-    def update_profile(self, global_id: GlobalID, person: TrackedPerson) -> None:
-        """Update an existing profile with new features."""
+    def update_profile(self, profile: PersonProfile) -> None:
+        """Update an existing profile with modified data."""
+        cursor = self.conn.cursor()
+        
+        # Update main profile record
+        cursor.execute("""
+            UPDATE person_profiles 
+            SET last_seen = ?, track_ids = ?
+            WHERE global_id = ?
+        """, (profile.last_seen, json.dumps(profile.track_ids), profile.global_id))
+        
+        # For simplicity, we'll only add new features, not update existing ones
+        # In a production system, you might want to implement more sophisticated merging
+        
+        self.conn.commit()
+
+    def update_profile_with_person(self, global_id: GlobalID, person: TrackedPerson) -> None:
+        """Update an existing profile with new features from a tracked person."""
         cursor = self.conn.cursor()
         
         # Check if profile exists
@@ -252,6 +268,23 @@ class SQLiteFeatureDatabase(BaseFeatureDatabase):
         
         return profile
     
+    def get_all_profiles(self) -> List[PersonProfile]:
+        """Get all person profiles from the database."""
+        cursor = self.conn.cursor()
+        
+        # Get all profile IDs
+        cursor.execute("SELECT global_id FROM person_profiles ORDER BY global_id")
+        profile_ids = [row['global_id'] for row in cursor.fetchall()]
+        
+        # Load each profile
+        profiles = []
+        for global_id in profile_ids:
+            profile = self.get_profile(global_id)
+            if profile:
+                profiles.append(profile)
+        
+        return profiles
+    
     def get_next_global_id(self) -> GlobalID:
         """Get the next available global ID."""
         cursor = self.conn.cursor()
@@ -317,26 +350,62 @@ class SQLiteFeatureDatabase(BaseFeatureDatabase):
         )
     
     def _compute_similarity(self, person: TrackedPerson, profile: PersonProfile) -> float:
-        """Compute similarity between person and profile using enhanced appearance matching."""
+        """Compute similarity between person and profile using enhanced multi-modal matching."""
         now = datetime.now()
         similarities = []
         weights = []
         
-        # Compare face embeddings
+        # Enhanced face similarity with multiple embeddings
         if person.face_embedding is not None and profile.face_embeddings:
+            face_scores = []
+            face_weights = []
+            
             for timestamp, embedding in profile.face_embeddings:
-                weight = self._compute_time_weight(now - timestamp)
+                time_weight = self._compute_time_weight(now - timestamp)
                 similarity = self._cosine_similarity(person.face_embedding, embedding)
-                similarities.append(similarity)
-                weights.append(weight * 0.6)  # 60% weight for face
+                
+                # Apply confidence boost for high-quality face matches
+                if similarity > 0.85:
+                    similarity = min(1.0, similarity * 1.1)  # Boost very high similarities
+                
+                face_scores.append(similarity)
+                face_weights.append(time_weight)
+            
+            if face_scores:
+                # Use the best face match (not average) for robustness
+                best_face_score = max(face_scores)
+                best_face_weight = max(face_weights)
+                similarities.append(best_face_score)
+                weights.append(best_face_weight * 0.65)  # 65% weight for face
         
-        # Compare appearance descriptions with enhanced matching
+        # Enhanced appearance similarity with multiple descriptions
         if person.appearance is not None and profile.appearances:
+            app_scores = []
+            app_weights = []
+            
             for timestamp, appearance in profile.appearances:
-                weight = self._compute_time_weight(now - timestamp)
+                time_weight = self._compute_time_weight(now - timestamp)
                 similarity = self._enhanced_appearance_similarity(person.appearance, appearance)
-                similarities.append(similarity)
-                weights.append(weight * 0.4)  # 40% weight for appearance
+                
+                app_scores.append(similarity)
+                app_weights.append(time_weight)
+            
+            if app_scores:
+                # Use weighted average of appearance scores for stability
+                if len(app_scores) == 1:
+                    best_app_score = app_scores[0]
+                    best_app_weight = app_weights[0]
+                else:
+                    # Take average of top 2 scores if multiple available
+                    sorted_indices = sorted(range(len(app_scores)), key=lambda i: app_scores[i], reverse=True)
+                    top_scores = [app_scores[i] for i in sorted_indices[:2]]
+                    top_weights = [app_weights[i] for i in sorted_indices[:2]]
+                    
+                    best_app_score = sum(top_scores) / len(top_scores)
+                    best_app_weight = max(top_weights)
+                
+                similarities.append(best_app_score)
+                weights.append(best_app_weight * 0.35)  # 35% weight for appearance
         
         if not similarities:
             return 0.0
@@ -348,64 +417,225 @@ class SQLiteFeatureDatabase(BaseFeatureDatabase):
         else:
             weights = np.ones_like(weights) / len(weights)
         
-        # Compute weighted average similarity
-        return float(np.sum(np.array(similarities) * weights))
+        # Compute weighted similarity
+        final_similarity = float(np.sum(np.array(similarities) * weights))
+        
+        # Apply confidence adjustments based on data quality
+        if len(similarities) > 1:  # Multi-modal matching bonus
+            final_similarity *= 1.05
+        
+        if len(profile.face_embeddings) > 2 or len(profile.appearances) > 2:  # Rich profile bonus
+            final_similarity *= 1.03
+        
+        return min(1.0, final_similarity)
     
     def _enhanced_appearance_similarity(self, a: AppearanceDescription, b: AppearanceDescription) -> float:
-        """Enhanced appearance similarity with specific color and style matching."""
-        matches = 0
-        total = 0
+        """Enhanced appearance similarity with robust color and semantic matching."""
         
-        # Weight different features differently
+        # Comprehensive color mapping for robust matching
+        color_families = {
+            'black': ['black', 'dark', 'charcoal', 'ebony', 'jet', 'coal'],
+            'white': ['white', 'light', 'cream', 'ivory', 'off-white', 'pearl', 'snow'],
+            'gray': ['gray', 'grey', 'silver', 'ash', 'slate', 'charcoal', 'gunmetal'],
+            'blue': ['blue', 'navy', 'royal', 'cobalt', 'azure', 'cerulean', 'sapphire', 'denim'],
+            'red': ['red', 'crimson', 'scarlet', 'burgundy', 'maroon', 'cherry', 'wine', 'rust'],
+            'green': ['green', 'emerald', 'forest', 'olive', 'lime', 'mint', 'sage', 'jade'],
+            'brown': ['brown', 'tan', 'beige', 'khaki', 'camel', 'chocolate', 'coffee', 'mocha'],
+            'yellow': ['yellow', 'gold', 'golden', 'amber', 'blonde', 'cream', 'butter'],
+            'orange': ['orange', 'coral', 'peach', 'rust', 'bronze', 'copper'],
+            'purple': ['purple', 'violet', 'lavender', 'plum', 'magenta', 'mauve'],
+            'pink': ['pink', 'rose', 'salmon', 'blush', 'fuchsia']
+        }
+        
+        def robust_color_match(color1: str, color2: str) -> float:
+            """Robust color matching with fuzzy logic."""
+            if not color1 or not color2 or color1 == "unknown" or color2 == "unknown":
+                return 0.0
+            
+            c1_clean = color1.lower().strip()
+            c2_clean = color2.lower().strip()
+            
+            # Exact match
+            if c1_clean == c2_clean:
+                return 1.0
+            
+            # Color family matching
+            for family, variants in color_families.items():
+                c1_in_family = any(variant in c1_clean for variant in variants)
+                c2_in_family = any(variant in c2_clean for variant in variants)
+                
+                if c1_in_family and c2_in_family:
+                    # Same family - check for exact variant match
+                    for variant in variants:
+                        if variant in c1_clean and variant in c2_clean:
+                            return 0.95  # Very close match within family
+                    return 0.8  # Same family, different variants
+            
+            # Partial word matching
+            words1 = set(c1_clean.split())
+            words2 = set(c2_clean.split())
+            intersection = words1.intersection(words2)
+            
+            if intersection:
+                overlap_ratio = len(intersection) / max(len(words1), len(words2))
+                return overlap_ratio * 0.6
+            
+            return 0.0
+        
+        def clothing_semantic_match(type1: str, type2: str) -> float:
+            """Semantic matching for clothing types."""
+            if not type1 or not type2 or type1 == "unknown" or type2 == "unknown":
+                return 0.0
+            
+            t1_clean = type1.lower().strip()
+            t2_clean = type2.lower().strip()
+            
+            if t1_clean == t2_clean:
+                return 1.0
+            
+            # Clothing semantic groups
+            semantic_groups = {
+                'casual_shirts': ['t-shirt', 'tee', 'polo', 'tank-top', 'casual'],
+                'formal_shirts': ['shirt', 'dress-shirt', 'button-down', 'formal', 'blouse'],
+                'outerwear': ['jacket', 'hoodie', 'sweater', 'cardigan', 'coat', 'blazer'],
+                'pants_casual': ['jeans', 'denim', 'casual', 'chinos'],
+                'pants_formal': ['trousers', 'dress-pants', 'slacks', 'formal'],
+                'pants_athletic': ['shorts', 'athletic', 'sport', 'gym', 'sweatpants'],
+                'dresses': ['dress', 'gown', 'frock', 'sundress'],
+                'skirts': ['skirt', 'mini', 'maxi', 'midi'],
+                'shoes_athletic': ['sneakers', 'trainers', 'athletic', 'sport', 'running'],
+                'shoes_formal': ['dress-shoes', 'oxford', 'formal', 'loafers', 'heels'],
+                'shoes_casual': ['boots', 'sandals', 'flats', 'casual']
+            }
+            
+            # Check semantic similarity
+            for group, items in semantic_groups.items():
+                t1_in_group = any(item in t1_clean for item in items)
+                t2_in_group = any(item in t2_clean for item in items)
+                
+                if t1_in_group and t2_in_group:
+                    # Check for exact item match within group
+                    for item in items:
+                        if item in t1_clean and item in t2_clean:
+                            return 0.9  # Very similar within category
+                    return 0.7  # Same category, different types
+            
+            return 0.0
+        
+        # Adaptive feature weights based on distinctiveness and reliability
         feature_weights = {
-            'hair_color': 0.15,
-            'shirt_color': 0.20,
-            'pants_color': 0.20,
-            'shoe_color': 0.15,
-            'shirt_type': 0.10,
-            'pants_type': 0.10,
-            'gender_guess': 0.10
+            'gender_guess': {'weight': 1.5, 'critical': True, 'type': 'exact'},
+            'age_range': {'weight': 1.0, 'critical': False, 'type': 'exact'},
+            'hair_color': {'weight': 2.2, 'critical': True, 'type': 'color'},
+            'hair_style': {'weight': 1.3, 'critical': False, 'type': 'semantic'},
+            'shirt_color': {'weight': 3.0, 'critical': True, 'type': 'color'},
+            'shirt_type': {'weight': 2.0, 'critical': True, 'type': 'semantic'},
+            'pants_color': {'weight': 2.8, 'critical': True, 'type': 'color'},
+            'pants_type': {'weight': 1.8, 'critical': True, 'type': 'semantic'},
+            'shoe_color': {'weight': 1.6, 'critical': False, 'type': 'color'},
+            'shoe_type': {'weight': 1.4, 'critical': False, 'type': 'semantic'}
         }
         
         total_weight = 0
         weighted_score = 0
+        available_features = 0
+        critical_matches = 0
+        critical_features = 0
         
-        for field, weight in feature_weights.items():
+        # Compare individual features
+        for field, config in feature_weights.items():
             val_a = getattr(a, field, None)
             val_b = getattr(b, field, None)
             
-            if val_a is not None and val_b is not None and val_a != "unknown" and val_b != "unknown":
+            if val_a and val_b and val_a != "unknown" and val_b != "unknown":
+                available_features += 1
+                weight = config['weight']
+                
+                if config['critical']:
+                    critical_features += 1
+                
+                # Calculate similarity based on feature type
+                if config['type'] == 'color':
+                    similarity = robust_color_match(val_a, val_b)
+                elif config['type'] == 'semantic':
+                    similarity = clothing_semantic_match(val_a, val_b)
+                else:  # exact match
+                    similarity = 1.0 if val_a.lower() == val_b.lower() else 0.0
+                
+                # Track critical feature matches
+                if similarity > 0.6 and config['critical']:
+                    critical_matches += 1
+                
+                weighted_score += similarity * weight
                 total_weight += weight
-                if self._color_match(val_a, val_b):
-                    weighted_score += weight
         
-        return weighted_score / total_weight if total_weight > 0 else 0.0
-    
-    def _color_match(self, color1: str, color2: str) -> bool:
-        """Enhanced color matching with fuzzy matching for similar colors."""
-        if color1.lower() == color2.lower():
-            return True
+        # Enhanced accessories matching
+        acc_a = set(getattr(a, 'accessories', []) or [])
+        acc_b = set(getattr(b, 'accessories', []) or [])
         
-        # Define color groups for fuzzy matching
-        color_groups = [
-            ['black', 'dark', 'charcoal'],
-            ['white', 'light', 'cream', 'ivory'],
-            ['blue', 'navy', 'dark blue', 'light blue'],
-            ['red', 'crimson', 'dark red', 'light red'],
-            ['green', 'dark green', 'light green'],
-            ['brown', 'tan', 'beige', 'khaki'],
-            ['gray', 'grey', 'silver'],
-            ['yellow', 'gold', 'blonde']
-        ]
+        if acc_a or acc_b:
+            if acc_a and acc_b:
+                jaccard = len(acc_a.intersection(acc_b)) / len(acc_a.union(acc_b))
+                weighted_score += jaccard * 1.5
+            total_weight += 1.5
         
-        color1_lower = color1.lower()
-        color2_lower = color2.lower()
+        # Enhanced dominant colors matching
+        colors_a = getattr(a, 'dominant_colors', []) or []
+        colors_b = getattr(b, 'dominant_colors', []) or []
         
-        for group in color_groups:
-            if any(c in color1_lower for c in group) and any(c in color2_lower for c in group):
-                return True
+        if colors_a and colors_b:
+            color_similarity_sum = 0
+            total_comparisons = 0
+            
+            for ca in colors_a:
+                best_match = 0
+                for cb in colors_b:
+                    match_score = robust_color_match(ca, cb)
+                    best_match = max(best_match, match_score)
+                color_similarity_sum += best_match
+                total_comparisons += 1
+            
+            if total_comparisons > 0:
+                avg_color_sim = color_similarity_sum / total_comparisons
+                weighted_score += avg_color_sim * 2.2
+            total_weight += 2.2
         
-        return False
+        if total_weight == 0:
+            return 0.0
+        
+        base_similarity = weighted_score / total_weight
+        
+        # Apply quality-based adjustments
+        
+        # Critical features bonus - if most distinctive features match well
+        if critical_features > 0:
+            critical_ratio = critical_matches / critical_features
+            if critical_ratio >= 0.6:  # At least 60% of critical features match
+                base_similarity *= (1.0 + 0.15 * critical_ratio)  # Up to 15% bonus
+        
+        # Data quality penalty for insufficient information
+        if available_features < 4:
+            base_similarity *= 0.85  # Reduce confidence with limited data
+        elif available_features >= 7:
+            base_similarity *= 1.05  # Boost confidence with rich data
+        
+        # Consistency bonus - if multiple color matches are consistent
+        color_attrs = ['hair_color', 'shirt_color', 'pants_color', 'shoe_color']
+        color_matches = 0
+        color_comparisons = 0
+        
+        for attr in color_attrs:
+            val_a = getattr(a, attr, None)
+            val_b = getattr(b, attr, None)
+            if val_a and val_b and val_a != "unknown" and val_b != "unknown":
+                color_comparisons += 1
+                if robust_color_match(val_a, val_b) > 0.7:
+                    color_matches += 1
+        
+        if color_comparisons >= 3 and color_matches >= 2:
+            base_similarity *= 1.08  # Consistency bonus
+        
+        return min(1.0, max(0.0, base_similarity))
     
     def _compute_time_weight(self, age: timedelta) -> float:
         """Compute time decay weight for a feature."""

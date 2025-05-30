@@ -52,24 +52,42 @@ class LLaVAExtractor(BaseAppearanceExtractor):
         pil_image.save(img_byte_arr, format='JPEG')
         img_base64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
         
-        # Enhanced prompt for specific color and style extraction
-        detailed_prompt = """Analyze this person's appearance and provide detailed information in the following JSON format:
+        # New structured prompt for consistent output
+        reid_prompt = """You are a visual-attribute extractor for person re-identification.  
+Inspect the image and output **only** the following JSON (no extra text):
+
 {
-    "gender_guess": "male/female/unknown",
-    "age_range": "child/teenager/young_adult/middle_aged/elderly",
-    "hair_color": "specific color (e.g., black, brown, blonde, gray, red, etc.)",
-    "hair_style": "short/long/curly/straight/bald/etc.",
-    "shirt_color": "specific color of upper clothing",
-    "shirt_type": "t-shirt/button-down/polo/sweater/jacket/hoodie/tank-top/etc.",
-    "pants_color": "specific color of lower clothing",
-    "pants_type": "jeans/dress-pants/shorts/skirt/dress/leggings/etc.",
-    "shoe_color": "specific color of footwear",
-    "shoe_type": "sneakers/dress-shoes/boots/sandals/heels/etc.",
-    "accessories": ["list of visible accessories like glasses, hat, bag, watch, etc."],
-    "dominant_colors": ["top 3 most prominent colors in outfit"]
+  "gender": "male | female | unknown",
+  "age": "child | teen | young_adult | middle_aged | elderly",
+  "hair": {
+      "color": "black | brown | blonde | red | gray | white | bald | unknown",
+      "style": "short | medium | long | curly | straight | shaved | bald | unknown"
+  },
+  "top": {
+      "type": "t-shirt | shirt | polo | sweater | jacket | hoodie | coat | dress | unknown",
+      "color": "black | white | gray | red | orange | yellow | green | blue | purple | pink | brown | beige"
+  },
+  "bottom": {
+      "type": "jeans | trousers | shorts | skirt | dress | leggings | unknown",
+      "color": "same palette as above"
+  },
+  "shoes": {
+      "type": "sneakers | dress_shoes | boots | sandals | heels | loafers | unknown",
+      "color": "same palette as above"
+  },
+  "accessories": [
+      "glasses","sunglasses","hat","cap","beanie",
+      "bag","backpack","handbag","watch","bracelet","necklace",
+      "scarf","earphones","mask"
+  ],                      
+  "dominant_outfit_colors": ["color1","color2","color3"]   
 }
 
-Be specific about colors (e.g., "dark blue" instead of just "blue"). If you can't see something clearly, use "unknown". Only return the JSON, no other text."""
+Rules:
+- Use ONLY the listed values (lowercase, exact spelling).
+- If uncertain, choose "unknown".
+- Do **not** add or remove keys.
+- Return valid JSON only."""
         
         # Call local Ollama server
         try:
@@ -79,7 +97,7 @@ Be specific about colors (e.g., "dark blue" instead of just "blue"). If you can'
                 headers={"Content-Type": "application/json"},
                 json={
                     "model": self.model_name,
-                    "prompt": detailed_prompt,
+                    "prompt": reid_prompt,
                     "images": [img_base64],
                     "stream": False,
                     "options": {
@@ -129,34 +147,34 @@ Be specific about colors (e.g., "dark blue" instead of just "blue"). If you can'
         
         # Map LLaVA response to our AppearanceDescription structure
         parsed = {
-            "gender_guess": response_data.get("gender_guess", "unknown"),
-            "age_range": response_data.get("age_range", "unknown"),
+            "gender_guess": response_data.get("gender", "unknown"),
+            "age_range": response_data.get("age", "unknown"),
             
             # Hair information
-            "hair_color": response_data.get("hair_color", "unknown"),
-            "hair_style": response_data.get("hair_style", "unknown"),
+            "hair_color": response_data.get("hair", {}).get("color", "unknown"),
+            "hair_style": response_data.get("hair", {}).get("style", "unknown"),
             
             # Upper clothing
-            "shirt_color": response_data.get("shirt_color", "unknown"),
-            "shirt_type": response_data.get("shirt_type", "unknown"),
+            "shirt_color": response_data.get("top", {}).get("color", "unknown"),
+            "shirt_type": response_data.get("top", {}).get("type", "unknown"),
             
             # Lower clothing
-            "pants_color": response_data.get("pants_color", "unknown"),
-            "pants_type": response_data.get("pants_type", "unknown"),
+            "pants_color": response_data.get("bottom", {}).get("color", "unknown"),
+            "pants_type": response_data.get("bottom", {}).get("type", "unknown"),
             
             # Footwear
-            "shoe_color": response_data.get("shoe_color", "unknown"),
-            "shoe_type": response_data.get("shoe_type", "unknown"),
+            "shoe_color": response_data.get("shoes", {}).get("color", "unknown"),
+            "shoe_type": response_data.get("shoes", {}).get("type", "unknown"),
             
             # Additional features
             "accessories": response_data.get("accessories", []),
-            "dominant_colors": response_data.get("dominant_colors", []),
+            "dominant_colors": response_data.get("dominant_outfit_colors", []),
             
-            # Legacy fields for compatibility
-            "hair": f"{response_data.get('hair_color', 'unknown')} {response_data.get('hair_style', '')}".strip(),
-            "upper_clothing": f"{response_data.get('shirt_color', 'unknown')} {response_data.get('shirt_type', '')}".strip(),
-            "lower_clothing": f"{response_data.get('pants_color', 'unknown')} {response_data.get('pants_type', '')}".strip(),
-            "footwear": f"{response_data.get('shoe_color', 'unknown')} {response_data.get('shoe_type', '')}".strip()
+            # Legacy fields for compatibility - create meaningful descriptions
+            "hair": f"{response_data.get('hair', {}).get('color', 'unknown')} {response_data.get('hair', {}).get('style', '')}".strip(),
+            "upper_clothing": f"{response_data.get('top', {}).get('color', 'unknown')} {response_data.get('top', {}).get('type', '')}".strip(),
+            "lower_clothing": f"{response_data.get('bottom', {}).get('color', 'unknown')} {response_data.get('bottom', {}).get('type', '')}".strip(),
+            "footwear": f"{response_data.get('shoes', {}).get('color', 'unknown')} {response_data.get('shoes', {}).get('type', '')}".strip()
         }
         
         return parsed
