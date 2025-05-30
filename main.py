@@ -160,7 +160,8 @@ def visualize_frame(
         f"Total Persons: {total_persons}",
         f"New This Frame: {new_persons_count}",
         f"ID Assignment: Appearance-first",
-        f"Extraction: Immediate (50% body visible)",
+        f"Extraction: Whole body visible (100%)",
+        f"Matching: 95%+ similarity required",
         f"Press 'q' to quit"
     ]
     
@@ -418,14 +419,14 @@ def process_video(
                 
                 # Check if this person is ready for APPEARANCE extraction (immediate, once only, with body visibility check)
                 if person.track_id not in persons_with_appearance_features:
-                    # Check body visibility (at least 50% visible)
+                    # Check body visibility (whole body must be visible)
                     body_visibility = calculate_body_visibility(person.bbox, frame.shape)
-                    if body_visibility >= 0.5:
+                    if body_visibility >= 1.0:  # Require 100% body visibility
                         persons_ready_for_appearance.append(person)
                         persons_with_appearance_features.add(person.track_id)
-                        logger.info(f"Track ID {person.track_id} ready for appearance extraction ({body_visibility:.1%} visible)")
+                        logger.info(f"Track ID {person.track_id} ready for appearance extraction (100.0% visible)")
                     else:
-                        logger.debug(f"Track ID {person.track_id} body visibility too low ({body_visibility:.1%}) - skipping appearance extraction")
+                        logger.debug(f"Track ID {person.track_id} body visibility too low ({body_visibility:.1%}) - need whole body visible for appearance extraction")
             
             # STEP 1: Extract APPEARANCE features FIRST for persons ready (appearance-first ID assignment)
             for person in persons_ready_for_appearance:
@@ -486,15 +487,15 @@ def process_video(
                                     
                                     logger.debug(f"Track {person.track_id} vs Person {profile.global_id}: {matches}/{total_checked} properties match, similarity = {appearance_similarity:.3f}")
                                     
-                                    # Strict matching: require 90%+ similarity for same person
-                                    if appearance_similarity > 0.9 and appearance_similarity > best_similarity:
+                                    # Strict matching: require 95%+ similarity for same person
+                                    if appearance_similarity > 0.95 and appearance_similarity > best_similarity:
                                         best_similarity = appearance_similarity
                                         matched_global_id = profile.global_id
                                         logger.info(f"Strong appearance match found for track {person.track_id}: {matches}/{total_checked} properties match ({appearance_similarity:.1%}) with person {profile.global_id}")
                         
                         logger.info(f"Final match decision for track {person.track_id}: best_similarity={best_similarity:.1%}, matched_global_id={matched_global_id}")
                         
-                        if matched_global_id is not None and best_similarity > 0.9:
+                        if matched_global_id is not None and best_similarity > 0.95:
                             # Found appearance match - assign to existing person
                             track_to_global_mapping[person.track_id] = matched_global_id
                             logger.info(f"✅ Track {person.track_id} assigned to existing person {matched_global_id} via appearance match (similarity: {best_similarity:.1%})")
@@ -538,7 +539,7 @@ def process_video(
                             if best_similarity > 0.0:
                                 # Calculate matches for the best candidate for logging
                                 best_matches = int(best_similarity * 16)  # Estimate based on 16 string properties
-                                logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (best match had only {best_matches} properties, need 90%+ for same person)")
+                                logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (best match had only {best_matches} properties, need 95%+ for same person)")
                             else:
                                 logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (no meaningful appearance matches found)")
                             
@@ -806,7 +807,7 @@ def process_video(
                     f"New IDs: {len(reid_result.new_global_ids)} | "
                     f"Reused IDs: {len(reid_result.reused_global_ids)} | "
                     f"JSON entries: {len(person_features)} | "
-                    f"Matching rule: 90%+ similarity required"
+                    f"Matching rule: 95%+ similarity required"
                 )
     
     finally:
