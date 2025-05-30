@@ -29,7 +29,7 @@ A robust person re-identification system that combines YOLOv8 detection, ByteTra
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/feedleai/llavatracker
 cd hybrid_reid
 
 # Install dependencies

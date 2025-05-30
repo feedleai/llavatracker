@@ -6,7 +6,8 @@ features:
     min_face_size: 32
   llava:
     enabled: true
-    api_endpoint: "https://api.llava.ai/v1/describe"
+    server_url: "http://localhost:8000"  # Local vLLM server
+    model_name: "liuhaotian/llava-v1.5-7b"
     min_person_height: 100  # pixels
     appearance_match_threshold: 0.8
 
