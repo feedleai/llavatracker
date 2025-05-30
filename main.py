@@ -7,7 +7,7 @@ import logging
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 import yaml
 import cv2
 import numpy as np
@@ -22,7 +22,7 @@ from .reid.feature_database import TimeDecayFeatureDatabase
 from .reid.sqlite_database import SQLiteFeatureDatabase
 from .reid.id_resolver import IDResolver
 from .utils.image_cropper import ImageCropper
-from .reid_types import TrackingResult, ReIDResult
+from .reid_types import TrackingResult, ReIDResult, TrackedPerson
 
 def setup_logging(config: dict) -> None:
     """Configure logging based on config."""
@@ -58,6 +58,7 @@ def load_config(config_path: str) -> dict:
 def visualize_frame(
     frame: np.ndarray,
     result: ReIDResult,
+    tracked_persons: List[TrackedPerson],
     config: dict,
     frame_id: int = 0,
     fps: float = 0.0,
@@ -72,6 +73,7 @@ def visualize_frame(
     Args:
         frame: Input frame
         result: Re-identification results
+        tracked_persons: List of tracked persons in this frame
         config: Visualization configuration
         frame_id: Current frame number
         fps: Current processing FPS
@@ -91,7 +93,7 @@ def visualize_frame(
     for track_id, global_id in result.assignments.items():
         # Find the tracked person
         person = next(
-            (p for p in result.tracked_persons if p.track_id == track_id),
+            (p for p in tracked_persons if p.track_id == track_id),
             None
         )
         if person is None:
@@ -147,7 +149,7 @@ def visualize_frame(
     stats_lines = [
         f"Frame: {frame_id}",
         f"FPS: {fps:.1f}",
-        f"Tracked: {len(result.tracked_persons)}",
+        f"Tracked: {len(tracked_persons)}",
         f"Total Persons: {total_persons}",
         f"New This Frame: {new_persons_count}",
         f"Press 'q' to quit"
@@ -306,6 +308,7 @@ def process_video(
             vis_frame = visualize_frame(
                 frame, 
                 reid_result, 
+                tracking_result.tracked_persons,
                 config,
                 frame_id=frame_id,
                 fps=avg_fps,
