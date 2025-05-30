@@ -1,0 +1,34 @@
+# Computer Vision and ML
+ultralytics>=8.0.0
+opencv-python>=4.5.0
+torch>=1.9.0
+torchvision>=0.10.0
+numpy>=1.19.0
+Pillow>=8.0.0
+
+# Face recognition
+insightface>=0.7.0
+onnxruntime>=1.8.0
+
+# LLaVA API integration
+requests>=2.25.0
+
+# Database
+sqlite3  # Built into Python
+
+# Data handling
+pydantic>=1.8.0
+PyYAML>=5.4.0
+
+# Logging
+loguru>=0.5.0
+
+# Utilities
+tqdm>=4.60.0
+matplotlib>=3.3.0
+seaborn>=0.11.0
+
+# Development and testing
+pytest>=6.0.0
+black>=21.0.0
+flake8>=3.8.0 
