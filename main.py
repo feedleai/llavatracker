@@ -429,6 +429,11 @@ def process_video(
             
             # STEP 1: Extract APPEARANCE features FIRST for persons ready (appearance-first ID assignment)
             for person in persons_ready_for_appearance:
+                # Skip if this track already has a global_id assigned (prevent reprocessing)
+                if person.track_id in track_to_global_mapping:
+                    logger.debug(f"Track {person.track_id} already has global_id {track_to_global_mapping[person.track_id]}, skipping appearance extraction")
+                    continue
+                    
                 logger.info(f"Extracting appearance features for track ID {person.track_id} (appearance-first)")
                 
                 try:
@@ -446,19 +451,26 @@ def process_video(
                         best_similarity = 0.0
                         
                         existing_profiles = feature_db.get_all_profiles()
+                        logger.info(f"Checking appearance match for track {person.track_id} against {len(existing_profiles)} existing profiles")
+                        
                         for profile in existing_profiles:
                             if profile.appearances:
                                 for timestamp_app, stored_appearance in profile.appearances:
                                     appearance_similarity = feature_db._enhanced_appearance_similarity(appearance_description, stored_appearance)
-                                    if appearance_similarity > 0.8 and appearance_similarity > best_similarity:
+                                    logger.debug(f"Track {person.track_id} vs Person {profile.global_id}: similarity = {appearance_similarity:.3f}")
+                                    
+                                    # Make matching more strict: require 0.85+ similarity AND must be significantly better than current best
+                                    if appearance_similarity >= 0.85 and appearance_similarity > (best_similarity + 0.05):
                                         best_similarity = appearance_similarity
                                         matched_global_id = profile.global_id
-                                        logger.info(f"Appearance match found for track {person.track_id}: {appearance_similarity:.3f} with person {profile.global_id}")
+                                        logger.info(f"Strong appearance match found for track {person.track_id}: {appearance_similarity:.3f} with person {profile.global_id}")
                         
-                        if matched_global_id is not None:
+                        logger.info(f"Final match decision for track {person.track_id}: best_similarity={best_similarity:.3f}, matched_global_id={matched_global_id}")
+                        
+                        if matched_global_id is not None and best_similarity >= 0.85:
                             # Found appearance match - assign to existing person
                             track_to_global_mapping[person.track_id] = matched_global_id
-                            logger.info(f"Track {person.track_id} assigned to existing person {matched_global_id} via appearance match")
+                            logger.info(f"✅ Track {person.track_id} assigned to existing person {matched_global_id} via appearance match (similarity: {best_similarity:.3f})")
                             
                             # Add new appearance data directly to the database
                             try:
@@ -494,7 +506,7 @@ def process_video(
                                 next_global_id += 1
                             total_unique_persons += 1
                             track_to_global_mapping[person.track_id] = new_global_id
-                            logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (new appearance)")
+                            logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (no good appearance match, best was {best_similarity:.3f})")
                             
                             # Create new profile
                             new_profile = PersonProfile(
@@ -522,7 +534,7 @@ def process_video(
                             next_global_id += 1
                         total_unique_persons += 1
                         track_to_global_mapping[person.track_id] = new_global_id
-                        logger.info(f"Track {person.track_id} assigned new global ID {new_global_id} (no appearance)")
+                        logger.info(f"🆕 Track {person.track_id} assigned NEW global ID {new_global_id} (no appearance extracted)")
                         
                         # Create basic profile
                         new_profile = PersonProfile(
@@ -682,6 +694,11 @@ def process_video(
                 reused_global_ids=reid_reused_ids,
                 frame=frame
             )
+            
+            # Log current assignments for debugging
+            if reid_result_assignments:
+                assignments_str = ", ".join([f"T{tid}->P{gid}" for tid, gid in reid_result_assignments.items()])
+                logger.debug(f"Frame {frame_id} assignments: {assignments_str}")
             
             # Save person features to JSON periodically (every 30 frames)
             if frame_id % 30 == 0 and person_features:
