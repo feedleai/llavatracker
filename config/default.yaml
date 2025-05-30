@@ -28,7 +28,7 @@ tracker:
     model_path: "yolov8n.pt"
     track_thresh: 0.5
     iou_threshold: 0.7
-    device: "auto"  # auto, cpu, cuda
+    device: "cuda"  # cuda for GPU, cpu for CPU-only
     min_box_area: 100
 
 # Logging Settings
@@ -42,16 +42,6 @@ visualization:
   show_track_ids: false
   show_global_ids: true
   show_confidence: false
-  text_scale: 0.8
-  colors:
-    - [255, 0, 0]     # Red
-    - [0, 255, 0]     # Green
-    - [0, 0, 255]     # Blue
-    - [255, 255, 0]   # Yellow
-    - [255, 0, 255]   # Magenta
-    - [0, 255, 255]   # Cyan
-    - [255, 128, 0]   # Orange
-    - [128, 0, 255]   # Purple
   box_thickness: 2  # Not used anymore (no bounding boxes)
   text_scale: 0.8  # Larger text for better visibility
   colors:

@@ -12,6 +12,7 @@ import yaml
 import cv2
 import numpy as np
 from loguru import logger
+import time
 
 from .tracker.bytetrack_wrapper import ByteTrackWrapper
 from .features.base import FeatureExtractionPipeline
@@ -57,16 +58,25 @@ def load_config(config_path: str) -> dict:
 def visualize_frame(
     frame: np.ndarray,
     result: ReIDResult,
-    config: dict
+    config: dict,
+    frame_id: int = 0,
+    fps: float = 0.0,
+    total_persons: int = 0,
+    new_persons_count: int = 0
 ) -> np.ndarray:
     """
     Visualize tracking and re-identification results on frame.
-    Shows only global IDs above people's heads without bounding boxes.
+    Shows only global IDs above people's heads without bounding boxes,
+    plus real-time statistics overlay.
     
     Args:
         frame: Input frame
         result: Re-identification results
         config: Visualization configuration
+        frame_id: Current frame number
+        fps: Current processing FPS
+        total_persons: Total unique persons seen so far
+        new_persons_count: Number of new persons in this frame
         
     Returns:
         Annotated frame
@@ -124,6 +134,56 @@ def visualize_frame(
             (255, 255, 255),  # White text
             thickness
         )
+    
+    # Add statistics overlay in top-left corner
+    height, width = vis_frame.shape[:2]
+    overlay_font = cv2.FONT_HERSHEY_SIMPLEX
+    overlay_font_scale = 0.6
+    overlay_thickness = 1
+    overlay_color = (255, 255, 255)  # White text
+    bg_color = (0, 0, 0)  # Black background
+    
+    # Prepare statistics text
+    stats_lines = [
+        f"Frame: {frame_id}",
+        f"FPS: {fps:.1f}",
+        f"Tracked: {len(result.tracked_persons)}",
+        f"Total Persons: {total_persons}",
+        f"New This Frame: {new_persons_count}",
+        f"Press 'q' to quit"
+    ]
+    
+    # Calculate overlay size
+    max_text_width = 0
+    line_height = 0
+    for line in stats_lines:
+        (text_w, text_h), baseline = cv2.getTextSize(line, overlay_font, overlay_font_scale, overlay_thickness)
+        max_text_width = max(max_text_width, text_w)
+        line_height = max(line_height, text_h + baseline)
+    
+    # Draw semi-transparent background for statistics
+    overlay_padding = 10
+    overlay_width = max_text_width + 2 * overlay_padding
+    overlay_height = len(stats_lines) * line_height + 2 * overlay_padding
+    
+    # Create overlay background
+    overlay = vis_frame.copy()
+    cv2.rectangle(overlay, (0, 0), (overlay_width, overlay_height), bg_color, -1)
+    cv2.addWeighted(overlay, 0.7, vis_frame, 0.3, 0, vis_frame)
+    
+    # Draw statistics text
+    y_offset = overlay_padding + line_height
+    for line in stats_lines:
+        cv2.putText(
+            vis_frame,
+            line,
+            (overlay_padding, y_offset),
+            overlay_font,
+            overlay_font_scale,
+            overlay_color,
+            overlay_thickness
+        )
+        y_offset += line_height
     
     return vis_frame
 
@@ -185,8 +245,23 @@ def process_video(
     
     # Track which persons we've seen to only extract features for new ones
     seen_track_ids = set()
+    total_unique_persons = 0
+    
+    # For FPS calculation
+    frame_start_time = time.time()
+    fps_history = []
     
     try:
+        # Create named window with resizable option
+        cv2.namedWindow("Person Re-ID Preview", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Person Re-ID Preview", 1280, 720)  # Default size
+        
+        print("\n🎬 Video preview window opened!")
+        print("Controls:")
+        print("  - Press 'q' to quit")
+        print("  - Resize window as needed")
+        print("  - Global IDs are shown above each person's head")
+        
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -207,6 +282,7 @@ def process_video(
                     feature_pipeline.extract_features(frame, person)
                     new_persons.append(person)
                     seen_track_ids.add(person.track_id)
+                    total_unique_persons += 1
             
             # Resolve IDs for all tracked persons
             reid_result = id_resolver.resolve_ids(
@@ -219,16 +295,35 @@ def process_video(
             # Update the ReIDResult frame for visualization
             reid_result.frame = frame
             
-            # Visualize results (only showing global IDs above heads)
-            vis_frame = visualize_frame(frame, reid_result, config)
+            # Calculate FPS
+            frame_end_time = time.time()
+            frame_fps = 1.0 / (frame_end_time - frame_start_time) if frame_end_time > frame_start_time else 0
+            fps_history.append(frame_fps)
+            if len(fps_history) > 30:  # Keep last 30 frames for smoothing
+                fps_history.pop(0)
+            avg_fps = sum(fps_history) / len(fps_history)
+            frame_start_time = frame_end_time
+            
+            # Visualize results with enhanced overlay
+            vis_frame = visualize_frame(
+                frame, 
+                reid_result, 
+                config,
+                frame_id=frame_id,
+                fps=avg_fps,
+                total_persons=total_unique_persons,
+                new_persons_count=len(new_persons)
+            )
             
             # Write frame if output is enabled
             if writer is not None:
                 writer.write(vis_frame)
             
-            # Display frame
-            cv2.imshow("Person Re-ID", vis_frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            # Display frame with enhanced window
+            cv2.imshow("Person Re-ID Preview", vis_frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                print("\n⏹️  Video preview stopped by user")
                 break
             
             # Cleanup old profiles periodically
@@ -242,8 +337,10 @@ def process_video(
             if frame_id % config["logging"]["log_interval"] == 0:
                 logger.info(
                     f"Processed frame {frame_id} | "
+                    f"FPS: {avg_fps:.1f} | "
                     f"Tracked: {len(tracking_result.tracked_persons)} | "
                     f"New persons: {len(new_persons)} | "
+                    f"Total unique: {total_unique_persons} | "
                     f"New IDs: {len(reid_result.new_global_ids)} | "
                     f"Reused IDs: {len(reid_result.reused_global_ids)}"
                 )

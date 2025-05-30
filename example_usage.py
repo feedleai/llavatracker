@@ -150,7 +150,12 @@ def main():
         print(f"  - LLaVA model: {config['features']['llava']['model_name']}")
     
     print("\n🚀 Starting processing...")
-    print("Press 'q' in the video window to quit early.")
+    print("📺 Video preview window will open showing:")
+    print("   • Real-time person tracking and re-identification")
+    print("   • Global person IDs (P1, P2, etc.) above each person")
+    print("   • Live statistics (FPS, frame count, person count)")
+    print("   • Press 'q' in the video window to quit early")
+    print("\n⏳ Please wait for the preview window to appear...")
     
     # Process the video
     try:
