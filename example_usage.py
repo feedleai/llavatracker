@@ -134,9 +134,8 @@ def main():
     # Setup logging
     setup_logging(config)
     
-    # Define output video path
-    video_name = Path(args.video_path).stem
-    output_video = str(output_dir / f"{video_name}_reid.mp4")
+    # Define output video path - simple name "output.mp4"
+    output_video = str(output_dir / "output.mp4")
     
     print(f"\n🎬 Processing video: {args.video_path}")
     print(f"📁 Output video: {output_video}")
