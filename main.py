@@ -225,11 +225,16 @@ def save_person_features_json(person_features: dict, output_path: str):
         output_path: Path to save the JSON file
     """
     try:
+        logger.debug(f"Attempting to save {len(person_features)} person features to JSON")
+        
         # Create clean JSON with only appearance attributes
         json_features = {}
         for person_id, features in person_features.items():
+            logger.debug(f"Processing {person_id} with features: {list(features.keys())}")
+            
             if "appearance_description" in features and features["appearance_description"]:
                 appearance = features["appearance_description"]
+                logger.debug(f"Found appearance data for {person_id}: {appearance}")
                 
                 # Extract only the structured appearance attributes
                 json_features[person_id] = {
@@ -246,14 +251,21 @@ def save_person_features_json(person_features: dict, output_path: str):
                     "accessories": appearance.get("accessories", []),
                     "dominant_colors": appearance.get("dominant_colors", [])
                 }
+                logger.debug(f"Added {person_id} to JSON with appearance: {json_features[person_id]}")
+            else:
+                logger.debug(f"No appearance_description found for {person_id}")
+        
+        logger.info(f"Saving {len(json_features)} persons with appearance data to {output_path}")
         
         # Save to JSON file with pretty formatting
         with open(output_path, 'w') as f:
             json.dump(json_features, f, indent=2, ensure_ascii=False)
         
-        logger.debug(f"Person appearance features saved to {output_path}")
+        logger.info(f"Person appearance features saved to {output_path} ({len(json_features)} persons)")
     except Exception as e:
         logger.error(f"Failed to save person features to JSON: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 def process_video(
     video_path: str,
@@ -376,28 +388,112 @@ def process_video(
             # Extract features only for persons who have waited 2 seconds
             for person in persons_ready_for_features:
                 logger.info(f"Extracting features for person with track ID {person.track_id}")
-                extracted_features = feature_pipeline.extract_features(frame, person)
                 
-                # Store extracted features for this track_id (will be mapped to global ID later)
-                if extracted_features:
-                    track_features = {
-                        "track_id": person.track_id,
-                        "first_detected_frame": frame_id,
-                        "extraction_timestamp": timestamp.isoformat(),
-                    }
+                # Initialize track features with basic info
+                track_features = {
+                    "track_id": person.track_id,
+                    "first_detected_frame": frame_id,
+                    "extraction_timestamp": timestamp.isoformat(),
+                    "appearance_description": None
+                }
+                
+                try:
+                    updated_person = feature_pipeline.extract_features(frame, person)
                     
-                    # Add appearance description if available
-                    if hasattr(extracted_features, 'appearance_description') and extracted_features.appearance_description:
+                    # Check if we got appearance data
+                    if updated_person and hasattr(updated_person, 'appearance') and updated_person.appearance:
+                        logger.info(f"Appearance object found for track {person.track_id}: {type(updated_person.appearance)}")
+                        
                         # Convert AppearanceDescription object to dict for JSON serialization
-                        if hasattr(extracted_features.appearance_description, 'dict'):
-                            track_features["appearance_description"] = extracted_features.appearance_description.dict()
-                        elif hasattr(extracted_features.appearance_description, '__dict__'):
-                            track_features["appearance_description"] = extracted_features.appearance_description.__dict__
+                        if hasattr(updated_person.appearance, 'dict'):
+                            track_features["appearance_description"] = updated_person.appearance.dict()
+                            logger.info(f"Used .dict() method for track {person.track_id}")
+                        elif hasattr(updated_person.appearance, '__dict__'):
+                            track_features["appearance_description"] = updated_person.appearance.__dict__
+                            logger.info(f"Used .__dict__ for track {person.track_id}")
+                        elif isinstance(updated_person.appearance, dict):
+                            track_features["appearance_description"] = updated_person.appearance
+                            logger.info(f"Already a dict for track {person.track_id}")
                         else:
-                            track_features["appearance_description"] = extracted_features.appearance_description
-                    
-                    # Store by track_id for now (will update with global_id after resolution)
-                    person_features[f"track_{person.track_id}"] = track_features
+                            # Try to convert to dict manually
+                            try:
+                                appearance_dict = {
+                                    "gender_guess": getattr(updated_person.appearance, 'gender_guess', 'unknown'),
+                                    "age_range": getattr(updated_person.appearance, 'age_range', 'unknown'),
+                                    "hair_color": getattr(updated_person.appearance, 'hair_color', 'unknown'),
+                                    "hair_style": getattr(updated_person.appearance, 'hair_style', 'unknown'),
+                                    "shirt_color": getattr(updated_person.appearance, 'shirt_color', 'unknown'),
+                                    "shirt_type": getattr(updated_person.appearance, 'shirt_type', 'unknown'),
+                                    "pants_color": getattr(updated_person.appearance, 'pants_color', 'unknown'),
+                                    "pants_type": getattr(updated_person.appearance, 'pants_type', 'unknown'),
+                                    "shoe_color": getattr(updated_person.appearance, 'shoe_color', 'unknown'),
+                                    "shoe_type": getattr(updated_person.appearance, 'shoe_type', 'unknown'),
+                                    "accessories": getattr(updated_person.appearance, 'accessories', []),
+                                    "dominant_colors": getattr(updated_person.appearance, 'dominant_colors', [])
+                                }
+                                track_features["appearance_description"] = appearance_dict
+                                logger.info(f"Manually converted appearance for track {person.track_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to convert appearance to dict for track {person.track_id}: {e}")
+                                # Create a fallback appearance description
+                                track_features["appearance_description"] = {
+                                    "gender_guess": "unknown",
+                                    "age_range": "unknown", 
+                                    "hair_color": "unknown",
+                                    "hair_style": "unknown",
+                                    "shirt_color": "unknown",
+                                    "shirt_type": "unknown",
+                                    "pants_color": "unknown",
+                                    "pants_type": "unknown",
+                                    "shoe_color": "unknown",
+                                    "shoe_type": "unknown",
+                                    "accessories": [],
+                                    "dominant_colors": [],
+                                    "extraction_error": str(e)
+                                }
+                        
+                        logger.info(f"Final appearance data for track {person.track_id}: {track_features['appearance_description']}")
+                    else:
+                        logger.warning(f"No appearance data extracted for track {person.track_id}")
+                        # Create a placeholder appearance description so we still save something
+                        track_features["appearance_description"] = {
+                            "gender_guess": "unknown",
+                            "age_range": "unknown",
+                            "hair_color": "unknown", 
+                            "hair_style": "unknown",
+                            "shirt_color": "unknown",
+                            "shirt_type": "unknown",
+                            "pants_color": "unknown",
+                            "pants_type": "unknown",
+                            "shoe_color": "unknown",
+                            "shoe_type": "unknown",
+                            "accessories": [],
+                            "dominant_colors": [],
+                            "extraction_status": "no_appearance_data"
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"Feature extraction failed for track {person.track_id}: {e}")
+                    # Create an error placeholder
+                    track_features["appearance_description"] = {
+                        "gender_guess": "unknown",
+                        "age_range": "unknown",
+                        "hair_color": "unknown",
+                        "hair_style": "unknown", 
+                        "shirt_color": "unknown",
+                        "shirt_type": "unknown",
+                        "pants_color": "unknown",
+                        "pants_type": "unknown",
+                        "shoe_color": "unknown",
+                        "shoe_type": "unknown",
+                        "accessories": [],
+                        "dominant_colors": [],
+                        "extraction_error": str(e)
+                    }
+                
+                # Always store the track features, even if extraction failed
+                person_features[f"track_{person.track_id}"] = track_features
+                logger.info(f"Stored features for track_{person.track_id} in person_features dict")
             
             # Resolve IDs for all tracked persons
             reid_result = id_resolver.resolve_ids(
